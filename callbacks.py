@@ -1208,6 +1208,17 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             else:
                 await query.answer(" دسترسی غیرمجاز!", show_alert=True)
             return
+        # Never show a confirmation for an already-empty list.
+        if not get_group_cleanup_values(g, list_type):
+            names = {"owners": "مالکین", "admins": "مدیران", "special": "ویژه", "exempt": "معاف", "warns": "اخطارها", "muted": "سکوت ها", "banned": "بن ها"}
+            name = names.get(list_type, "لیست")
+            await query.message.edit_text(
+                f'<b><tg-emoji emoji-id="{PREMIUM_OK_EMOJI}">✔️</tg-emoji> لیست {name} از قبل خالی می‌باشد.</b>',
+                reply_markup=None,
+                parse_mode=ParseMode.HTML
+            )
+            await query.answer()
+            return
         await render_cleanup_confirm(query, list_type, cid); return
 
     elif data.startswith("list_cleanup_cancel:"):
