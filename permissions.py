@@ -50,10 +50,15 @@ def is_group_manager_id(g_data: dict, user_id: int) -> bool:
     return int(user_id) in (_role_ids(g_data, "owners") | _role_ids(g_data, "admins"))
 
 async def is_configured_group_manager(context, chat_id: int, user_id: int) -> bool:
+    # The bot's own management roles are authoritative for panel access.
+    # A user who is not a Telegram admin must still be allowed when they are
+    # explicitly registered as an admin/owner inside Goodi.
     if int(user_id) == int(OWNER_ID): return True
     g = get_group_data(load_db(), chat_id)
+    if is_group_manager_id(g, user_id):
+        return True
     if (g.get("management", {}) or {}).get("configured"):
-        return is_group_manager_id(g, user_id)
+        return False
     return await is_admin_or_owner(context, chat_id, user_id)
 
 async def is_configured_group_owner(context, chat_id: int, user_id: int) -> bool:
