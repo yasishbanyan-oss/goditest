@@ -18,6 +18,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("این پنل برای شما نیست.", show_alert=True)
             return
 
+    # Moderation result buttons (view original / remove punishment) are handled
+    # before filter-panel callbacks so they work on normal group messages too.
+    if await handle_moderation_action_callback(query, context, db):
+        return
+
     # Filter-word panel callbacks are isolated in filter_handler.py.
     if await handle_filter_callback(query, context, db):
         return
