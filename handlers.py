@@ -721,16 +721,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not await is_configured_group_manager(context, chat_id, user_id):
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> شما دسترسی مدیریت این گروه را ندارید.</b>', parse_mode=ParseMode.HTML); return
                 cleanup_name = {"owners": "مالکین", "admins": "مدیران", "special": "ویژه", "exempt": "معاف", "warns": "اخطار", "muted": "سکوت", "banned": "بن"}[lt]
-                mgmt = g_data.get("management", {}) or {}
-                list_values = {
-                    "owners": mgmt.get("owners", []),
-                    "admins": mgmt.get("admins", []),
-                    "special": mgmt.get("special", []),
-                    "exempt": mgmt.get("exempt", []),
-                    "warns": g_data.get("warnings", {}),
-                    "muted": g_data.get("muted_users", {}),
-                    "banned": g_data.get("banned_users", {}),
-                }.get(lt, [])
+                list_values = get_group_cleanup_values(g_data, lt)
                 if not list_values:
                     await update.message.reply_text(
                         f'<b><tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✔️</tg-emoji> لیست {cleanup_name} از قبل خالی می‌باشد.</b>',
