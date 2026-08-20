@@ -173,14 +173,12 @@ async def handle_moderation_action_callback(query, context, db):
         if not allowed:
             await query.answer("این دکمه مختص شما نیست.", show_alert=True)
             return True
-        try:
-            await _send_saved_moderation_message(context, query.from_user.id, record.get("original", {}))
-            await query.answer("پیام اصلی برای شما ارسال شد.", show_alert=False)
-        except Exception:
-            original = record.get("original", {}) or {}
-            preview = original.get("text") or original.get("caption") or "این پیام قابل نمایش نیست."
-            preview = str(preview)[:180]
-            await query.answer(preview, show_alert=True)
+        # نمایش پیام باید به صورت پنجرهٔ Alert خود تلگرام باشد و به PV کاربر ارسال نشود.
+        # برای پیام‌های متنی از text و برای رسانه‌ها از caption استفاده می‌کنیم.
+        original = record.get("original", {}) or {}
+        preview = original.get("text") or original.get("caption") or "این پیام متن قابل نمایشی ندارد."
+        preview = str(preview)[:200]
+        await query.answer(preview, show_alert=True)
         return True
 
     # Remove buttons are manager-only; even the punished user cannot use them.
