@@ -10,6 +10,237 @@ FILTER_MUTE_EMOJI = "5872883940624179027"
 FILTER_TEMP_EMOJI = "5872792857252733333"
 FILTER_ALERT_EMOJI = "5819051035284479206"
 FILTER_DIAMOND_EMOJI = "5929272673627546181"
+FILTER_VIEW_EMOJI = FILTER_ALERT_EMOJI
+FILTER_REMOVE_WARN_EMOJI = "5206607081334906820"
+
+
+def _filter_moderation_keyboard(chat_id, message_id, action):
+    buttons = [[InlineKeyboardButton(
+        "🚨 مشاهده پیام",
+        callback_data=f"mod_view:{int(chat_id)}:{int(message_id)}",
+        style="primary",
+        icon_custom_emoji_id=FILTER_VIEW_EMOJI,
+    )]]
+    remove_specs = {
+        "warn": ("✔️ حذف اخطار", FILTER_REMOVE_WARN_EMOJI),
+        "mute": ("🔇 حذف سکوت", FILTER_MUTE_EMOJI),
+        "temp_mute": ("🔇 حذف سکوت", FILTER_MUTE_EMOJI),
+        "kick": ("❌ حذف بن", FILTER_KICK_EMOJI),
+    }
+    if action in remove_specs:
+        label, emoji_id = remove_specs[action]
+        buttons[0].append(InlineKeyboardButton(
+            label,
+            callback_data=f"mod_remove:{action}:{int(chat_id)}:{int(message_id)}",
+            style="danger",
+            icon_custom_emoji_id=emoji_id,
+        ))
+    return InlineKeyboardMarkup(buttons)
+
+
+def _capture_filter_message(message):
+    record = {
+        "message_id": int(getattr(message, "message_id", 0) or 0),
+        "text": getattr(message, "text", None) or "",
+        "caption": getattr(message, "caption", None) or "",
+        "message_type": "text",
+        "file_id": None,
+    }
+    if getattr(message, "photo", None):
+        try:
+            record["message_type"] = "photo"
+            record["file_id"] = message.photo[-1].file_id
+        except Exception:
+            pass
+    elif getattr(message, "video", None):
+        record["message_type"] = "video"
+        record["file_id"] = message.video.file_id
+    elif getattr(message, "animation", None):
+        record["message_type"] = "animation"
+        record["file_id"] = message.animation.file_id
+    elif getattr(message, "document", None):
+        record["message_type"] = "document"
+        record["file_id"] = message.document.file_id
+    elif getattr(message, "audio", None):
+        record["message_type"] = "audio"
+        record["file_id"] = message.audio.file_id
+    elif getattr(message, "voice", None):
+        record["message_type"] = "voice"
+        record["file_id"] = message.voice.file_id
+    elif getattr(message, "sticker", None):
+        record["message_type"] = "sticker"
+        record["file_id"] = message.sticker.file_id
+    return record
+
+
+def _moderation_manager_allowed(g_data, user_id):
+    # Registered Goodi owners/admins are allowed even without Telegram admin
+    # status. Telegram group owners/admins are also allowed independently.
+    return is_group_manager_id(g_data, int(user_id))
+
+
+async def _moderation_button_allowed(context, chat_id, g_data, user_id, target_id, allow_target=True):
+    if allow_target and int(user_id) == int(target_id):
+        return True
+    if _moderation_manager_allowed(g_data, user_id):
+        return True
+    try:
+        member = await cached_chat_member(context, chat_id, int(user_id))
+        if member.status in (ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+async def _send_saved_moderation_message(context, user_id, record):
+    text = record.get("text") or record.get("caption") or ""
+    msg_type = record.get("message_type", "text")
+    file_id = record.get("file_id")
+    if msg_type == "photo" and file_id:
+        return await context.bot.send_photo(chat_id=user_id, photo=file_id, caption=text or None)
+    if msg_type == "video" and file_id:
+        return await context.bot.send_video(chat_id=user_id, video=file_id, caption=text or None)
+    if msg_type == "animation" and file_id:
+        return await context.bot.send_animation(chat_id=user_id, animation=file_id, caption=text or None)
+    if msg_type == "document" and file_id:
+        return await context.bot.send_document(chat_id=user_id, document=file_id, caption=text or None)
+    if msg_type == "audio" and file_id:
+        return await context.bot.send_audio(chat_id=user_id, audio=file_id, caption=text or None)
+    if msg_type == "voice" and file_id:
+        return await context.bot.send_voice(chat_id=user_id, voice=file_id, caption=text or None)
+    if msg_type == "sticker" and file_id:
+        await context.bot.send_sticker(chat_id=user_id, sticker=file_id)
+        if text:
+            await context.bot.send_message(chat_id=user_id, text=text)
+        return True
+    if text:
+        return await context.bot.send_message(chat_id=user_id, text=text)
+    raise ValueError("original message content is unavailable")
+
+
+async def _send_filter_moderation_result(context, db, g, chat_id, text, record):
+    sent = await context.bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=_filter_moderation_keyboard(chat_id, record.get("message_id", 0), record.get("action", "delete")),
+    )
+    record = dict(record)
+    record["announcement_message_id"] = int(sent.message_id)
+    records = g.setdefault("moderation_action_records", {})
+    records[str(sent.message_id)] = record
+    # The callback carries the original deleted message id so the button can
+    # remain compact; keep a second index for that id as well.
+    original_id = int(record.get("message_id", 0) or 0)
+    if original_id:
+        records[str(original_id)] = record
+    # Keep the legacy target map intact for reply-based management commands.
+    g.setdefault("moderation_message_targets", {})[str(sent.message_id)] = int(record.get("target_id", 0))
+    mark_db_dirty()
+    save_db(force=True)
+    return sent
+
+
+async def handle_moderation_action_callback(query, context, db):
+    data = query.data or ""
+    if not (data.startswith("mod_view:") or data.startswith("mod_remove:")):
+        return False
+    try:
+        parts = data.split(":")
+        if data.startswith("mod_view:") and len(parts) == 3:
+            action = "view"
+            chat_id, message_id = int(parts[1]), int(parts[2])
+        elif data.startswith("mod_remove:") and len(parts) == 4:
+            action = parts[1]
+            chat_id, message_id = int(parts[2]), int(parts[3])
+        else:
+            await query.answer("اطلاعات دکمه نامعتبر است.", show_alert=True)
+            return True
+    except (TypeError, ValueError):
+        await query.answer("اطلاعات دکمه نامعتبر است.", show_alert=True)
+        return True
+
+    g_data = get_group_data(db, chat_id)
+    record = (g_data.setdefault("moderation_action_records", {}) or {}).get(str(message_id))
+    if not record:
+        await query.answer("اطلاعات این پیام دیگر در دسترس نیست.", show_alert=True)
+        return True
+    target_id = int(record.get("target_id", 0) or 0)
+
+    if action == "view":
+        allowed = await _moderation_button_allowed(context, chat_id, g_data, query.from_user.id, target_id, allow_target=True)
+        if not allowed:
+            await query.answer("این دکمه مختص شما نیست.", show_alert=True)
+            return True
+        try:
+            await _send_saved_moderation_message(context, query.from_user.id, record.get("original", {}))
+            await query.answer("پیام اصلی برای شما ارسال شد.", show_alert=False)
+        except Exception:
+            original = record.get("original", {}) or {}
+            preview = original.get("text") or original.get("caption") or "این پیام قابل نمایش نیست."
+            preview = str(preview)[:180]
+            await query.answer(preview, show_alert=True)
+        return True
+
+    # Remove buttons are manager-only; even the punished user cannot use them.
+    if not await _moderation_button_allowed(context, chat_id, g_data, query.from_user.id, target_id, allow_target=False):
+        await query.answer("این دکمه مختص مقامداران ربات می‌باشد.", show_alert=True)
+        return True
+
+    try:
+        if action == "warn":
+            before = int(record.get("warning_before", 0) or 0)
+            after = int(record.get("warning_after", before + 1) or 0)
+            current_item = g_data.setdefault("warnings", {}).get(str(target_id)) or {}
+            current_count = int(current_item.get("count", 0) or 0)
+            # A warning button belongs to that exact warning. Do not let an old
+            # button remove newer warnings that were issued afterwards.
+            if not record.get("final_punishment") and current_count != after:
+                await query.answer("این دکمه مربوط به یک اخطار قدیمی است.", show_alert=True)
+                return True
+            if before > 0:
+                g_data.setdefault("warnings", {})[str(target_id)] = {
+                    "count": before,
+                    "username": record.get("target_username", ""),
+                    "fullname": record.get("target_name", "کاربر"),
+                }
+            else:
+                g_data.setdefault("warnings", {}).pop(str(target_id), None)
+            final_punishment = record.get("final_punishment")
+            if final_punishment == "kick":
+                await context.bot.unban_chat_member(chat_id, target_id, only_if_banned=True)
+                g_data.setdefault("banned_users", {}).pop(str(target_id), None)
+            elif final_punishment in ("mute", "temp_mute"):
+                await context.bot.restrict_chat_member(chat_id, target_id, permissions=full_group_permissions())
+                g_data.setdefault("muted_users", {}).pop(str(target_id), None)
+        elif action == "kick":
+            await context.bot.unban_chat_member(chat_id, target_id, only_if_banned=True)
+            g_data.setdefault("banned_users", {}).pop(str(target_id), None)
+        elif action in ("mute", "temp_mute"):
+            await context.bot.restrict_chat_member(chat_id, target_id, permissions=full_group_permissions())
+            g_data.setdefault("muted_users", {}).pop(str(target_id), None)
+        else:
+            await query.answer("این عملیات قابل حذف نیست.", show_alert=True)
+            return True
+    except Exception:
+        await query.answer("ربات دسترسی اجرای حذف این مجازات را ندارد.", show_alert=True)
+        return True
+
+    records = g_data.setdefault("moderation_action_records", {})
+    records.pop(str(message_id), None)
+    announcement_id = int(record.get("announcement_message_id", 0) or 0)
+    if announcement_id:
+        records.pop(str(announcement_id), None)
+    mark_db_dirty()
+    save_db(force=True)
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.answer("عملیات با موفقیت حذف شد.", show_alert=False)
+    return True
+
 
 FILTER_ACTIONS = {
     "delete": "حذف پیام کاربر",
@@ -309,6 +540,7 @@ async def _execute_filter_action(update, context, db, g, item, user):
     name = user.full_name or "کاربر"
     action = item.get("punishment", "delete")
     duration_minutes = int(item.get("duration_minutes", 30) or 30)
+    original_record = _capture_filter_message(update.message)
 
     if not await _bot_can_delete(context, chat_id):
         await update.message.reply_text(
@@ -331,9 +563,18 @@ async def _execute_filter_action(update, context, db, g, item, user):
         f'<b><tg-emoji emoji-id="{FILTER_ALERT_EMOJI}">⚠️</tg-emoji> کاربر {mention_name} عزیز!</b>\n\n'
         f'<b>پیام ارسالی شما در لیست فیلتر ربات قرار داشت و حذف گردید.</b>'
     )
+    moderation_record = {
+        "message_id": int(original_record.get("message_id", 0) or 0),
+        "target_id": int(uid),
+        "target_name": name,
+        "target_username": user.username or "",
+        "action": action,
+        "original": original_record,
+        "created_at": datetime.now().timestamp(),
+    }
 
     if action == "delete":
-        await context.bot.send_message(chat_id=chat_id, text=base, parse_mode=ParseMode.HTML)
+        await _send_filter_moderation_result(context, db, g, chat_id, base, moderation_record)
         return
 
     if action == "warn":
@@ -349,8 +590,12 @@ async def _execute_filter_action(update, context, db, g, item, user):
 
         warnings = g.setdefault("warnings", {})
         item_warn = warnings.setdefault(str(uid), {"count": 0, "username": user.username or "", "fullname": name})
+        try:
+            warning_before = int(item_warn.get("count", 0))
+        except (TypeError, ValueError):
+            warning_before = 0
         limit = max(1, min(20, int(settings.get("count", 3))))
-        item_warn["count"] = min(limit, int(item_warn.get("count", 0)) + 1)
+        item_warn["count"] = min(limit, warning_before + 1)
         item_warn["username"] = user.username or ""
         item_warn["fullname"] = name
         count = int(item_warn["count"])
@@ -358,10 +603,12 @@ async def _execute_filter_action(update, context, db, g, item, user):
         if count < limit:
             mark_db_dirty()
             save_db(force=True)
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=base + f"\n<b>- کاربر {mention_name} [ {count}/{limit} ] اخطار دریافت کرد.</b>",
-                parse_mode=ParseMode.HTML
+            moderation_record["warning_before"] = warning_before
+            moderation_record["warning_after"] = count
+            await _send_filter_moderation_result(
+                context, db, g, chat_id,
+                base + f"\n<b>- کاربر {mention_name} [ {count}/{limit} ] اخطار دریافت کرد.</b>",
+                moderation_record,
             )
             return
 
@@ -377,6 +624,9 @@ async def _execute_filter_action(update, context, db, g, item, user):
             )
             return
 
+        moderation_record["warning_before"] = warning_before
+        moderation_record["warning_after"] = 0
+        moderation_record["final_punishment"] = warning_punishment
         try:
             if warning_punishment == "kick":
                 await context.bot.ban_chat_member(chat_id, uid)
@@ -404,7 +654,11 @@ async def _execute_filter_action(update, context, db, g, item, user):
             warnings.pop(str(uid), None)
             mark_db_dirty()
             save_db(force=True)
-            await context.bot.send_message(chat_id=chat_id, text=base + f"\n<b>- {final_phrase}</b>", parse_mode=ParseMode.HTML)
+            await _send_filter_moderation_result(
+                context, db, g, chat_id,
+                base + f"\n<b>- {final_phrase}</b>",
+                moderation_record,
+            )
         except Exception:
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -424,10 +678,10 @@ async def _execute_filter_action(update, context, db, g, item, user):
             }
             mark_db_dirty()
             save_db(force=True)
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=base + "\n<b>و بخاطر ارسال کلمه ممنوعه از گروه اخراج میشوید.</b>",
-                parse_mode=ParseMode.HTML
+            await _send_filter_moderation_result(
+                context, db, g, chat_id,
+                base + "\n<b>و بخاطر ارسال کلمه ممنوعه از گروه اخراج میشوید.</b>",
+                moderation_record,
             )
         except Exception:
             await context.bot.send_message(chat_id=chat_id, text=_filter_error_for_action("kick"), parse_mode=ParseMode.HTML)
@@ -458,7 +712,11 @@ async def _execute_filter_action(update, context, db, g, item, user):
                 phrase = f"و بخاطر ارسال کلمه ممنوعه {_duration_label(duration_minutes)} سکوت میشوید."
             mark_db_dirty()
             save_db(force=True)
-            await context.bot.send_message(chat_id=chat_id, text=base + f"\n<b>{phrase}</b>", parse_mode=ParseMode.HTML)
+            await _send_filter_moderation_result(
+                context, db, g, chat_id,
+                base + f"\n<b>{phrase}</b>",
+                moderation_record,
+            )
         except Exception:
             await context.bot.send_message(chat_id=chat_id, text=_filter_error_for_action(action), parse_mode=ParseMode.HTML)
 
