@@ -623,6 +623,20 @@ async def render_warning_panel(query, chat_id: int, db: dict):
     text, kb = build_warning_panel(g, chat_id)
     await query.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
+def get_group_cleanup_values(g_data: dict, list_type: str):
+    """Return the canonical current data for a group list cleanup check."""
+    management = g_data.get("management", {}) or {}
+    return {
+        "owners": management.get("owners", []),
+        "admins": management.get("admins", []),
+        "special": management.get("special", []),
+        "exempt": management.get("exempt", []),
+        "warns": g_data.get("warnings", {}),
+        "muted": g_data.get("muted_users", {}),
+        "banned": g_data.get("banned_users", {}),
+    }.get(list_type, []) or []
+
+
 async def build_group_list_detail_content(context, chat_id: int, list_type: str, db: dict, viewer_id: int) -> tuple[str, InlineKeyboardMarkup]:
     g = get_group_data(db, chat_id)
     prune_group_action_lists(g)
