@@ -420,7 +420,8 @@ async def register_member(update: Update, db: dict):
         
         recent_list = [u for u in recent_list if u[0] != user_id]
         recent_list.append((user_id, {"fullname": fullname, "username": username}))
-        if len(recent_list) > 20:
+        # Keep enough unique recent users for the 50/300-person tag modes.
+        if len(recent_list) > 300:
             recent_list.pop(0)
         db["recent_active_users"][chat_str] = recent_list
         mark_db_dirty()
