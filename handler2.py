@@ -60,15 +60,13 @@ def _tag_display(user_id: int, username: str, fullname: str) -> str:
 
 
 async def _collect_recent_tag_users(context, chat_id: int, db: dict, limit: int):
-    """Collect up to ``limit`` unique, current group members in newest-first order.
+    """Collect up to ``limit`` unique recent group users, newest first.
 
-    Telegram does not expose a general "list all members" Bot API method, so
-    the collector combines every per-group source Goodi already knows about:
-    recent activity, stored message history, per-group user records and the
-    global member cache.  The chat member count is checked first; when the
-    group has fewer members than the requested limit we simply collect as many
-    known current members as possible instead of stopping at an arbitrary
-    20-user cache.
+    Telegram has no Bot API method for listing every group member.  For the
+    "recent" modes we therefore use users Goodi has actually observed in this
+    group (recent activity + message history) first.  A live get_chat_member
+    check is used when available, but a temporary API/cache failure must not
+    make a user who just sent a message disappear from the tag list.
     """
     g_data = get_group_data(db, chat_id)
     member_count = None
@@ -83,8 +81,9 @@ async def _collect_recent_tag_users(context, chat_id: int, db: dict, limit: int)
 
     candidates = []
     seen_candidates = set()
+    activity_ids = set()
 
-    def add_candidate(uid, info=None):
+    def add_candidate(uid, info=None, activity=False):
         try:
             uid_int = int(uid)
         except (TypeError, ValueError):
@@ -92,56 +91,83 @@ async def _collect_recent_tag_users(context, chat_id: int, db: dict, limit: int)
         if uid_int <= 0 or uid_int in seen_candidates:
             return
         seen_candidates.add(uid_int)
-        info = info or {}
+        if activity:
+            activity_ids.add(uid_int)
+        info = info if isinstance(info, dict) else {}
         candidates.append((
             uid_int,
-            info.get("username", "") if isinstance(info, dict) else "",
-            info.get("fullname", info.get("user_name", "کاربر")) if isinstance(info, dict) else "کاربر",
+            info.get("username", ""),
+            info.get("fullname", info.get("user_name", "کاربر")),
         ))
 
-    # Newest activity first.
+    # Newest unique activity first.
     recent = db.get("recent_active_users", {}).get(str(chat_id), []) or []
     if isinstance(recent, dict):
         recent = list(recent.items())
-    for uid, info in reversed(recent):
-        add_candidate(uid, info)
+    for entry in reversed(recent):
+        try:
+            uid, info = entry
+        except (TypeError, ValueError):
+            continue
+        add_candidate(uid, info, activity=True)
 
-    # Stored messages are also newest-first and can contain considerably more
-    # unique users than the old 20-user recent cache.
+    # Message history is also a reliable record that the user has actually
+    # spoken in this group.  Use it as a fallback/extra source for older users.
     logs = g_data.get("message_logs", []) or []
     for item in reversed(logs):
+        if not isinstance(item, dict):
+            continue
         add_candidate(item.get("user_id"), {
             "username": item.get("username", ""),
             "fullname": item.get("user_name", "کاربر"),
-        })
+        }, activity=True)
 
-    # Per-group user records are another persistent source of known members.
+    # Per-group records and the global cache are fallback sources only.
     for uid, info in reversed(list((g_data.get("user_records", {}) or {}).items())):
         cached = db.get("members", {}).get(str(uid), {}) or {}
-        add_candidate(uid, cached if cached else info)
+        add_candidate(uid, cached if cached else info, activity=False)
 
-    # When the requested set is small, also check the global cache for users
-    # that the bot has seen elsewhere; membership is verified below.
     if member_count is not None and member_count <= limit:
         for uid, info in (db.get("members", {}) or {}).items():
-            add_candidate(uid, info)
+            add_candidate(uid, info, activity=False)
 
     result = []
     for uid, username, fullname in candidates:
-        try:
-            member = await cached_chat_member(context, chat_id, uid)
-            if member.status not in (
-                ChatMemberStatus.MEMBER,
-                ChatMemberStatus.ADMINISTRATOR,
-                ChatMemberStatus.OWNER,
-            ):
+        # A user observed sending a message in this exact group is already
+        # proven to be a group participant.  Do not discard that user merely
+        # because get_chat_member is temporarily unavailable or its cache is
+        # stale.  For cache-only users we still require a live membership check.
+        if uid in activity_ids:
+            try:
+                member = await cached_chat_member(context, chat_id, uid)
+                user_obj = getattr(member, "user", None)
+                if getattr(member, "status", None) in (
+                    ChatMemberStatus.MEMBER,
+                    ChatMemberStatus.ADMINISTRATOR,
+                    ChatMemberStatus.OWNER,
+                ):
+                    username = getattr(user_obj, "username", None) or username
+                    fullname = getattr(user_obj, "full_name", None) or fullname or "کاربر"
+            except Exception:
+                # Keep the observed user with the stored username/name.
+                pass
+            result.append((uid, username, fullname or "کاربر"))
+        else:
+            try:
+                member = await cached_chat_member(context, chat_id, uid)
+                if member.status not in (
+                    ChatMemberStatus.MEMBER,
+                    ChatMemberStatus.ADMINISTRATOR,
+                    ChatMemberStatus.OWNER,
+                ):
+                    continue
+                user_obj = getattr(member, "user", None)
+                username = getattr(user_obj, "username", None) or username
+                fullname = getattr(user_obj, "full_name", None) or fullname or "کاربر"
+                result.append((uid, username, fullname))
+            except Exception:
                 continue
-            user_obj = getattr(member, "user", None)
-            username = getattr(user_obj, "username", None) or username
-            fullname = getattr(user_obj, "full_name", None) or fullname or "کاربر"
-            result.append((uid, username, fullname))
-        except Exception:
-            continue
+
         if len(result) >= target_limit:
             break
 
