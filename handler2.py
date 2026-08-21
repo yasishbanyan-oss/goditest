@@ -60,25 +60,74 @@ def _tag_display(user_id: int, username: str, fullname: str) -> str:
 
 
 async def _collect_recent_tag_users(context, chat_id: int, db: dict, limit: int):
-    """Collect unique users from the newest stored group messages.
+    """Collect up to ``limit`` unique, current group members in newest-first order.
 
-    The bot cannot enumerate every member of a Telegram group. The existing
-    message log is therefore the source for the requested recent-user tags.
-    Users are deduplicated newest-first and verified as current chat members.
+    Telegram does not expose a general "list all members" Bot API method, so
+    the collector combines every per-group source Goodi already knows about:
+    recent activity, stored message history, per-group user records and the
+    global member cache.  The chat member count is checked first; when the
+    group has fewer members than the requested limit we simply collect as many
+    known current members as possible instead of stopping at an arbitrary
+    20-user cache.
     """
     g_data = get_group_data(db, chat_id)
-    logs = g_data.get("message_logs", []) or []
-    result = []
-    seen = set()
+    member_count = None
+    try:
+        member_count = int(await context.bot.get_chat_member_count(chat_id))
+    except Exception:
+        logger.exception("Could not get member count for tag | chat_id=%s", chat_id)
 
-    for item in reversed(logs):
+    target_limit = limit
+    if member_count is not None and member_count < target_limit:
+        target_limit = member_count
+
+    candidates = []
+    seen_candidates = set()
+
+    def add_candidate(uid, info=None):
         try:
-            uid = int(item.get("user_id"))
+            uid_int = int(uid)
         except (TypeError, ValueError):
-            continue
-        if uid in seen:
-            continue
-        seen.add(uid)
+            return
+        if uid_int <= 0 or uid_int in seen_candidates:
+            return
+        seen_candidates.add(uid_int)
+        info = info or {}
+        candidates.append((
+            uid_int,
+            info.get("username", "") if isinstance(info, dict) else "",
+            info.get("fullname", info.get("user_name", "کاربر")) if isinstance(info, dict) else "کاربر",
+        ))
+
+    # Newest activity first.
+    recent = db.get("recent_active_users", {}).get(str(chat_id), []) or []
+    if isinstance(recent, dict):
+        recent = list(recent.items())
+    for uid, info in reversed(recent):
+        add_candidate(uid, info)
+
+    # Stored messages are also newest-first and can contain considerably more
+    # unique users than the old 20-user recent cache.
+    logs = g_data.get("message_logs", []) or []
+    for item in reversed(logs):
+        add_candidate(item.get("user_id"), {
+            "username": item.get("username", ""),
+            "fullname": item.get("user_name", "کاربر"),
+        })
+
+    # Per-group user records are another persistent source of known members.
+    for uid, info in reversed(list((g_data.get("user_records", {}) or {}).items())):
+        cached = db.get("members", {}).get(str(uid), {}) or {}
+        add_candidate(uid, cached if cached else info)
+
+    # When the requested set is small, also check the global cache for users
+    # that the bot has seen elsewhere; membership is verified below.
+    if member_count is not None and member_count <= limit:
+        for uid, info in (db.get("members", {}) or {}).items():
+            add_candidate(uid, info)
+
+    result = []
+    for uid, username, fullname in candidates:
         try:
             member = await cached_chat_member(context, chat_id, uid)
             if member.status not in (
@@ -88,14 +137,14 @@ async def _collect_recent_tag_users(context, chat_id: int, db: dict, limit: int)
             ):
                 continue
             user_obj = getattr(member, "user", None)
-            username = getattr(user_obj, "username", None) or item.get("username", "")
-            fullname = getattr(user_obj, "full_name", None) or item.get("user_name", "کاربر")
+            username = getattr(user_obj, "username", None) or username
+            fullname = getattr(user_obj, "full_name", None) or fullname or "کاربر"
             result.append((uid, username, fullname))
         except Exception:
-            # A deleted/left user is simply skipped; tagging should continue.
             continue
-        if len(result) >= limit:
+        if len(result) >= target_limit:
             break
+
     return result
 
 
