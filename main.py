@@ -1,9 +1,9 @@
 # GoodiBot entry point
 import core
 import services, permissions, moderation, management, welcome, comments, jobs, links
-import panels, games, whisper, callbacks, handlers, support, help, fun, filter_handler, auto_responses, backup_restore, start_handler
+import panels, games, whisper, callbacks, callbacks2, handlers, handler2, support, help, fun, filter_handler, auto_responses, backup_restore, start_handler
 
-registry = core.bind_all_modules([services, permissions, moderation, management, welcome, comments, jobs, links, panels, games, whisper, callbacks, handlers, support, help, fun, filter_handler, auto_responses, backup_restore, start_handler])
+registry = core.bind_all_modules([services, permissions, moderation, management, welcome, comments, jobs, links, panels, games, whisper, callbacks, callbacks2, handlers, handler2, support, help, fun, filter_handler, auto_responses, backup_restore, start_handler])
 globals().update(registry)
 from core import *
 
@@ -29,6 +29,7 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members), group=-2)
     app.add_handler(ChatMemberHandler(track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(InlineQueryHandler(handle_inline_whisper))
+    app.add_handler(CallbackQueryHandler(handle_tag_callback, pattern=r"^tag_panel:"))
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     # Fast private /start handler: registered before the legacy handler so PV /start
     # never depends on the old get_me()-based path. Group /start remains unchanged.
@@ -39,6 +40,7 @@ def main():
     app.add_handler(CommandHandler("cancel", command_cancel))
     app.add_handler(CommandHandler("done", command_done))
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.ALL, handle_filter_messages), group=-3)
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.TEXT & (~filters.COMMAND), handle_tag_commands), group=-1)
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), dwoz_message_handler), group=-1)
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_goodi_support_message), group=-1)
     app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), handle_messages))
