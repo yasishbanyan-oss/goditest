@@ -55,6 +55,13 @@ async def handle_tag_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.answer("گزینه نامعتبر است.", show_alert=True)
             return True
 
+        # Close the selection panel immediately after a valid choice so the
+        # same panel cannot be used repeatedly or remain visually active.
+        try:
+            await query.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            logger.exception("Could not close tag panel | chat_id=%s", chat_id)
+
         await _send_tagged_users(query.message, users)
         await query.answer()
     except Exception:
