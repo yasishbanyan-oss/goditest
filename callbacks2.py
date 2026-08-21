@@ -1,5 +1,6 @@
 # GoodiBot - Tagging callbacks (new module; existing callbacks.py is untouched)
 from core import *
+from telegram import ReplyParameters
 from handler2 import _collect_manager_tag_users, _collect_recent_tag_users, _send_tagged_users, _tag_display
 
 
@@ -63,10 +64,21 @@ async def handle_tag_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             logger.exception("Could not delete tag panel | chat_id=%s", chat_id)
 
+        # The panel itself is anchored to the original replied message when
+        # the user opened the tag panel as a reply. Reuse that message as the
+        # reply target for every tag result. With no original reply, results
+        # are sent normally (no reply).
+        replied = getattr(query.message, "reply_to_message", None)
+        reply_to_message_id = getattr(replied, "message_id", None) if replied is not None else None
+        reply_kwargs = {}
+        if reply_to_message_id is not None:
+            reply_kwargs["reply_parameters"] = ReplyParameters(message_id=int(reply_to_message_id))
+
         if not users:
             await context.bot.send_message(
                 chat_id=chat_id,
                 text="کاربری برای تگ کردن پیدا نشد.",
+                **reply_kwargs,
             )
         else:
             chunks = []
@@ -88,6 +100,7 @@ async def handle_tag_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                     text=chunk,
                     parse_mode=ParseMode.HTML,
                     disable_web_page_preview=True,
+                    **reply_kwargs,
                 )
 
         await query.answer()
