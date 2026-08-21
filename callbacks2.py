@@ -1,6 +1,6 @@
 # GoodiBot - Tagging callbacks (new module; existing callbacks.py is untouched)
 from core import *
-from handler2 import _collect_manager_tag_users, _collect_recent_tag_users, _send_tagged_users
+from handler2 import _collect_manager_tag_users, _collect_recent_tag_users, _send_tagged_users, _tag_display
 
 
 def _tag_close_text():
@@ -55,14 +55,41 @@ async def handle_tag_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.answer("گزینه نامعتبر است.", show_alert=True)
             return True
 
-        # Close the selection panel immediately after a valid choice so the
-        # same panel cannot be used repeatedly or remain visually active.
+        # Delete the whole selection panel immediately after a valid choice.
+        # Removing only the keyboard leaves the panel message visible in the
+        # chat, which is not the intended UX. Send the result as a fresh message.
         try:
-            await query.message.edit_reply_markup(reply_markup=None)
+            await query.message.delete()
         except Exception:
-            logger.exception("Could not close tag panel | chat_id=%s", chat_id)
+            logger.exception("Could not delete tag panel | chat_id=%s", chat_id)
 
-        await _send_tagged_users(query.message, users)
+        if not users:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="کاربری برای تگ کردن پیدا نشد.",
+            )
+        else:
+            chunks = []
+            current = ""
+            for uid, username, fullname in users:
+                token = _tag_display(uid, username, fullname)
+                candidate = f"{current} - {token}" if current else token
+                if current and len(candidate) > 3800:
+                    chunks.append(current)
+                    current = token
+                else:
+                    current = candidate
+            if current:
+                chunks.append(current)
+
+            for chunk in chunks:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=chunk,
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+
         await query.answer()
     except Exception:
         logger.exception("Tag callback failed | chat_id=%s | user_id=%s | action=%s", chat_id, user_id, action)
