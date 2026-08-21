@@ -418,12 +418,25 @@ async def register_member(update: Update, db: dict):
         if chat_str not in db["recent_active_users"]: db["recent_active_users"][chat_str] = []
         recent_list = db["recent_active_users"][chat_str]
         
-        recent_list = [u for u in recent_list if u[0] != user_id]
-        recent_list.append((user_id, {"fullname": fullname, "username": username}))
+        # Normalize legacy integer/string ids before de-duplicating so every
+        # real sender remains represented exactly once in the recent-user cache.
+        normalized_recent = []
+        normalized_ids = set()
+        for entry in recent_list:
+            try:
+                entry_uid, entry_info = entry
+                entry_uid = str(entry_uid)
+                if entry_uid == user_id or entry_uid in normalized_ids:
+                    continue
+                normalized_ids.add(entry_uid)
+                normalized_recent.append((entry_uid, entry_info if isinstance(entry_info, dict) else {}))
+            except (TypeError, ValueError):
+                continue
+        normalized_recent.append((user_id, {"fullname": fullname, "username": username}))
         # Keep enough unique recent users for the 50/300-person tag modes.
-        if len(recent_list) > 300:
-            recent_list.pop(0)
-        db["recent_active_users"][chat_str] = recent_list
+        if len(normalized_recent) > 300:
+            normalized_recent = normalized_recent[-300:]
+        db["recent_active_users"][chat_str] = normalized_recent
         mark_db_dirty()
         
     save_db()
