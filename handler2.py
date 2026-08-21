@@ -1,5 +1,6 @@
 # GoodiBot - Tagging feature (new module; existing handlers.py is intentionally untouched)
 from core import *
+from telegram import ReplyParameters
 
 TAG_OPEN_COMMANDS = {
     "گودی همه رو خبر کن",
@@ -234,7 +235,7 @@ async def _collect_manager_tag_users(context, chat_id: int, db: dict):
     return list(users.values())
 
 
-async def _send_tagged_users(update_or_message, users, prefix=""):
+async def _send_tagged_users(update_or_message, users, prefix="", reply_to_message_id=None):
     if not users:
         await update_or_message.reply_text("کاربری برای تگ کردن پیدا نشد.")
         return
@@ -255,7 +256,15 @@ async def _send_tagged_users(update_or_message, users, prefix=""):
         chunks.append(current)
 
     for chunk in chunks:
-        await update_or_message.reply_text(chunk, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        reply_kwargs = {}
+        if reply_to_message_id is not None:
+            reply_kwargs["reply_parameters"] = ReplyParameters(message_id=int(reply_to_message_id))
+        await update_or_message.reply_text(
+            chunk,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+            **reply_kwargs,
+        )
 
 
 async def _open_tag_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -273,10 +282,19 @@ async def _open_tag_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     panel_text = "<b>حالت تگ کردن را انتخاب کنید:</b>"
+    panel_kwargs = {}
+    # If the tag command itself was sent as a reply, keep that original
+    # message as the target of the eventual tag result. The panel is also
+    # anchored to that same message so the callback can recover the target
+    # without changing callback-data format or storing extra state.
+    replied = getattr(message, "reply_to_message", None)
+    if replied is not None:
+        panel_kwargs["reply_parameters"] = ReplyParameters(message_id=int(replied.message_id))
     await message.reply_text(
         panel_text,
         reply_markup=_tag_panel_keyboard(user_id),
         parse_mode=ParseMode.HTML,
+        **panel_kwargs,
     )
 
 
@@ -313,4 +331,6 @@ async def handle_tag_commands(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         users = await _collect_recent_tag_users(context, chat_id, db, 300)
 
-    await _send_tagged_users(update.message, users)
+    replied = getattr(update.message, "reply_to_message", None)
+    reply_to_message_id = getattr(replied, "message_id", None) if replied is not None else None
+    await _send_tagged_users(update.message, users, reply_to_message_id=reply_to_message_id)
