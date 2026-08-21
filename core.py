@@ -451,8 +451,10 @@ def get_default_db_structure() -> dict:
         "shutdown_message": None,
         "global_bans": {},
         "global_group_bans": {},
-        "global_fun_named": [],
+            "global_fun_named": [],
         "global_fun_normal": [],
+        "global_foods": list(DEFAULT_FOODS),
+        "global_poems": list(DEFAULT_POEMS),
         "features": {
             "world_time": True,
             "handsome": True,
@@ -501,9 +503,12 @@ def migrate_db_if_needed(data: dict) -> dict:
 
     logger.info("Migrating database to v5...")
     new_db = get_default_db_structure()
-    for k in new_db.keys():
-        if k in data and k != "states":
-            new_db[k] = data[k]
+    for k, value in data.items():
+        # Preserve every persistent top-level capability, including keys added
+        # by newer modules. Interactive states are intentionally rebuilt by
+        # the existing state migration logic below.
+        if k not in ("version", "states"):
+            new_db[k] = value
 
     groups = new_db.setdefault("groups", {})
     for _, g_val in groups.items():
