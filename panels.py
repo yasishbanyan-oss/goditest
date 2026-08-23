@@ -606,11 +606,11 @@ def build_warning_panel(g_data: dict, chat_id: int) -> tuple[str, InlineKeyboard
     text = f'<b><tg-emoji emoji-id="{WARN_HEADER_EMOJI}">⚖️</tg-emoji> به بخش تنظیم اخطار خوش آمدید.</b>\n\n<b><tg-emoji emoji-id="{WARN_INFO_EMOJI}">🌟</tg-emoji> از طریق دکمه‌های زیر تعداد اخطار موردنظر و مجازات دریافتی را مشخص کنید.</b>'
     rows = [
         [InlineKeyboardButton(f"تعداد اخطار: {count}", callback_data=f"warning_noop:{chat_id}", style="primary", icon_custom_emoji_id=WARN_COUNT_EMOJI)],
-        [InlineKeyboardButton("\u2063", callback_data=f"warning_dec:{chat_id}", style="danger", icon_custom_emoji_id=WARN_MINUS_EMOJI), InlineKeyboardButton("\u2063", callback_data=f"warning_inc:{chat_id}", style="success", icon_custom_emoji_id=WARN_PLUS_EMOJI)],
+        [InlineKeyboardButton("\u200b", callback_data=f"warning_dec:{chat_id}", style="danger", icon_custom_emoji_id=WARN_MINUS_EMOJI), InlineKeyboardButton("\u200b", callback_data=f"warning_inc:{chat_id}", style="success", icon_custom_emoji_id=WARN_PLUS_EMOJI)],
         [InlineKeyboardButton(f"حالت سکوت موقت: {'فعال' if temp_active else 'غیرفعال'}", callback_data=f"warning_mode:temp_mute:{chat_id}", style="success" if temp_active else None, icon_custom_emoji_id=WARN_TEMP_EMOJI)],
     ]
     if temp_active:
-        rows.append([InlineKeyboardButton("\u2063", callback_data=f"warning_temp_dec:{chat_id}", style="danger", icon_custom_emoji_id=WARN_MINUS_EMOJI), InlineKeyboardButton(f"{temp_hours} ساعت", callback_data=f"warning_temp_noop:{chat_id}", style="primary"), InlineKeyboardButton("\u2063", callback_data=f"warning_temp_inc:{chat_id}", style="success", icon_custom_emoji_id=WARN_PLUS_EMOJI)])
+        rows.append([InlineKeyboardButton("\u200b", callback_data=f"warning_temp_dec:{chat_id}", style="danger", icon_custom_emoji_id=WARN_MINUS_EMOJI), InlineKeyboardButton(f"{temp_hours} ساعت", callback_data=f"warning_temp_noop:{chat_id}", style="primary"), InlineKeyboardButton("\u200b", callback_data=f"warning_temp_inc:{chat_id}", style="success", icon_custom_emoji_id=WARN_PLUS_EMOJI)])
     rows.extend([
         [InlineKeyboardButton(f"حالت سکوت: {'فعال' if mute_active else 'غیرفعال'}", callback_data=f"warning_mode:mute:{chat_id}", style="success" if mute_active else None, icon_custom_emoji_id=WARN_MUTE_EMOJI)],
         [InlineKeyboardButton(f"حالت اخراج: {'فعال' if kick_active else 'غیرفعال'}", callback_data=f"warning_mode:kick:{chat_id}", style="success" if kick_active else None, icon_custom_emoji_id=WARN_KICK_EMOJI)],
