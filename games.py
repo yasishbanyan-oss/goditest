@@ -21,9 +21,9 @@ def build_xo_keyboard(game_id: str, board: list, is_finished: bool = False) -> I
         for j in range(i, i + 3):
             cell = board[j]
             if cell == "O":
-                btn = InlineKeyboardButton("\u2063", callback_data=f"xo_move:{game_id}:{j}", icon_custom_emoji_id="5857031396723269245")
+                btn = InlineKeyboardButton("\u200b", callback_data=f"xo_move:{game_id}:{j}", icon_custom_emoji_id="5857031396723269245")
             elif cell == "X":
-                btn = InlineKeyboardButton("\u2063", callback_data=f"xo_move:{game_id}:{j}", icon_custom_emoji_id="5857415006022278161")
+                btn = InlineKeyboardButton("\u200b", callback_data=f"xo_move:{game_id}:{j}", icon_custom_emoji_id="5857415006022278161")
             else:
                 btn = InlineKeyboardButton(" ", callback_data=f"xo_move:{game_id}:{j}", icon_custom_emoji_id="5911319564301376749")
             row.append(btn)
