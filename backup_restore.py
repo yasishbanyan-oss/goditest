@@ -97,6 +97,75 @@ def _extract_restore_data(raw: bytes, filename: str) -> dict:
     return migrate_db_if_needed(data)
 
 
+def _build_group_exit_report(db: dict, chat_id: int, reason: str = "حذف/خروج ربات از گروه") -> tuple[io.BytesIO, str]:
+    """Build a complete text snapshot of everything currently persisted for a group."""
+    cid = str(chat_id)
+    group = (db.get("groups", {}) or {}).get(cid, {}) or {}
+    title = group.get("title") or f"گروه {chat_id}"
+
+    # Include the full group record plus all global stores that can reference
+    # the group's users/actions. This is intentionally a text export so the
+    # owner can inspect it even without restoring a database.
+    report = {
+        "group_id": chat_id,
+        "group_title": title,
+        "reason": reason,
+        "exported_at": datetime.now().isoformat(timespec="seconds"),
+        "group_data": group,
+        "group_message_logs": group.get("message_logs", []),
+        "group_management": group.get("management", {}),
+        "group_warnings": group.get("warnings", {}),
+        "group_muted_users": group.get("muted_users", {}),
+        "group_banned_users": group.get("banned_users", {}),
+        "group_filter_words": group.get("filter_words", []),
+        "group_locks": group.get("locks", {}),
+        "group_sensitive_contents": group.get("sensitive_contents", []),
+        "group_game_history": group.get("game_history", []),
+        "group_user_records": group.get("user_records", {}),
+        "group_recent_active_users": (db.get("recent_active_users", {}) or {}).get(cid, []),
+        "group_hourly_messages": (db.get("hourly_messages", {}) or {}).get(cid, {}),
+        "group_user_stats": db.get("user_stats", {}),
+        "group_action_records": db.get("action_records", {}),
+        "group_admin_logs": [
+            x for x in (db.get("admin_logs", []) or [])
+            if isinstance(x, dict) and str(x.get("chat_id")) == cid
+        ],
+        "group_games_snapshot": {
+            "xo_games": db.get("xo_games", {}),
+            "couples": db.get("couples", {}),
+        },
+        "full_database_reference": {
+            "version": db.get("version"),
+            "active_chats": db.get("active_chats", []),
+        },
+    }
+    payload = json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8")
+    stream = io.BytesIO(payload)
+    safe_title = re.sub(r"[^\w\u0600-\u06FF-]+", "_", str(title)).strip("_")[:60] or str(chat_id)
+    filename = f"goodi_group_backup_{safe_title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    stream.name = filename
+    stream.seek(0)
+    return stream, filename
+
+
+async def send_group_exit_backup(bot, chat_id: int, *, reason: str = "حذف/خروج ربات از گروه"):
+    db = load_db()
+    stream, filename = _build_group_exit_report(db, chat_id, reason=reason)
+    group = (db.get("groups", {}) or {}).get(str(chat_id), {}) or {}
+    title = group.get("title") or f"گروه {chat_id}"
+    caption = (
+        f'<b>{_be("backup", "💾")} ربات از گروه «{html.escape(str(title))}» حذف/عزل شد.</b>\n'
+        f'<b>علت: {html.escape(str(reason))}</b>\n\n'
+        '<b>نتایج بکاپ به شرح اطلاعات ثبت‌شده برای گروه است؛ شامل مدیریت، فیلترها، اخطارها، سکوت‌ها، بن‌ها، تنظیمات، قفل‌ها، فعالیت‌های ثبت‌شده و سوابق پیام/بازی موجود در دیتابیس.</b>'
+    )
+    await bot.send_document(
+        chat_id=int(OWNER_ID),
+        document=InputFile(stream, filename=filename),
+        caption=caption,
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def send_database_backup(bot, chat_id: int, *, automatic: bool = False):
     db = load_db()
     stream, filename = _build_backup_bytes(db)
