@@ -1,6 +1,45 @@
 # GoodiBot modular feature module
 from core import *
 
+def _normalized_profanity_text(text: str) -> str:
+    value = normalize_text(text or "").lower()
+    value = value.replace("ي", "ی").replace("ك", "ک")
+    # Remove zero-width characters, spaces and punctuation so variants such as
+    # «ک ی ر» or «مادر-جنده» are still recognized.
+    return re.sub(r"[^\w\u0600-\u06ff]+", "", value, flags=re.UNICODE)
+
+
+def _contains_profanity(text: str) -> bool:
+    if not text:
+        return False
+    compact = _normalized_profanity_text(text)
+    if not compact:
+        return False
+    for term in PROFANITY_TERMS:
+        normalized_term = _normalized_profanity_text(term)
+        if normalized_term and normalized_term in compact:
+            return True
+    return False
+
+
+def _is_goodi_whisper_message(msg, bot_id: int) -> bool:
+    if not msg:
+        return False
+    via_bot = getattr(msg, "via_bot", None)
+    if not via_bot or int(getattr(via_bot, "id", 0) or 0) != int(bot_id):
+        return False
+    content = (getattr(msg, "text", None) or getattr(msg, "caption", None) or "").lower()
+    if "نجوا" not in content:
+        return False
+    markup = getattr(msg, "reply_markup", None)
+    for row in getattr(markup, "inline_keyboard", []) or []:
+        for button in row or []:
+            callback_data = getattr(button, "callback_data", None)
+            if isinstance(callback_data, str) and callback_data.startswith("wh_"):
+                return True
+    return False
+
+
 def moderation_until_datetime(seconds: float | None):
     """Return a Telegram-safe timed restriction date.
 
@@ -290,40 +329,14 @@ async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE
         if user and (user.is_bot or user.id in special_ids or await is_configured_group_manager(context, chat.id, user.id)):
             return
 
-        # New content locks: طومار, فحش and نجوا. These run before the
-        # ordinary media/text locks and reuse the same privileged-user bypass.
-        text_content = msg.text or msg.caption or ""
-        if not should_delete and locks.get("scroll", False):
-            line_count = len(text_content.splitlines()) if text_content else 0
-            if len(text_content) > 50 or line_count > 5:
-                should_delete = True
-
-        if not should_delete and locks.get("profanity", False):
-            if contains_profanity(text_content):
-                should_delete = True
-
-        if not should_delete and locks.get("whisper", False):
-            if is_whisper_message(msg, getattr(context.bot, "id", None)):
-                should_delete = True
-
-        # Content explicitly marked as sensitive by a group/bot manager is
-        # removed for everyone except the same privileged group. The stored
-        # signature uses file_unique_id for media, so re-uploading the exact
-        # Telegram media is still recognized even if its file_id changes.
-        if not should_delete:
-            sensitive_signature = get_message_sensitive_signature(msg)
-            if sensitive_signature:
-                skind, svalue = sensitive_signature
-                sensitive_items = g_data.get("sensitive_contents", []) or []
-                if any(
-                    isinstance(item, dict) and item.get("kind") == skind and item.get("value") == svalue
-                    for item in sensitive_items
-                ):
-                    should_delete = True
+        # «قفل نجوا»: only Goodi inline-whisper messages are targeted, not
+        # ordinary messages that merely contain the word «نجوا».
+        if locks.get("whisper", False) and _is_goodi_whisper_message(msg, context.bot.id):
+            should_delete = True
 
         is_edited = update.edited_message is not None
 
-        if is_edited:
+        if is_edited and not should_delete:
             has_media = bool(msg.photo or msg.video or msg.animation or msg.audio or msg.voice or msg.document or msg.sticker)
             if has_media and locks.get("edit_media", False):
                 should_delete = True
@@ -352,6 +365,18 @@ async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             if locks.get("link", False):
                 if any(e.type in [MessageEntityType.URL, MessageEntityType.TEXT_LINK] for e in entities) or URL_REGEX.search(normalize_link_text(text_content)):
+                    should_delete = True
+
+            # «طومار»: delete messages longer than 50 characters or longer
+            # than five lines.
+            if not should_delete and locks.get("tag", False):
+                line_count = len(str(text_content).splitlines())
+                if len(str(text_content)) > 50 or line_count > 5:
+                    should_delete = True
+
+            # «فحش»: remove common profanity and normalized evasive variants.
+            if not should_delete and locks.get("mention", False):
+                if _contains_profanity(text_content):
                     should_delete = True
 
             if not should_delete and locks.get("username", False):
