@@ -18,6 +18,15 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer("این پنل برای شما نیست.", show_alert=True)
             return
 
+    # Leaving any interactive panel must invalidate unfinished input flows so a
+    # later ordinary message cannot accidentally complete an old operation.
+    # Keep filter_panel ownership itself until the filter callback validates it.
+    if (
+        not (data or "").lower().startswith("filter_")
+        and any(token in (data or "").lower() for token in ("back", "close", "cancel"))
+    ):
+        clear_user_pending_states_for_navigation(db, user_id)
+
     # Moderation result buttons (view original / remove punishment) are handled
     # before filter-panel callbacks so they work on normal group messages too.
     if await handle_moderation_action_callback(query, context, db):
@@ -302,7 +311,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         # fits and make a clear truncation when it does not.
         if len(preview) > 180:
             preview = preview[:180] + "…"
-        await query.answer(f"محتوای نجوا:\n\n{preview}", show_alert=True)
+        # Preview is the whisper content itself; do not add a "محتوای نجوا" label.
+        await query.answer(preview or " ", show_alert=True)
         return
 
     elif data.startswith("wh_confirm:"):
