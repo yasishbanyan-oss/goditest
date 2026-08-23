@@ -131,8 +131,15 @@ async def _handle_sensitive_command(update: Update, context: ContextTypes.DEFAUL
     g_data = get_group_data(load_db(), chat.id)
     sensitive = g_data.setdefault("sensitive_items", {})
 
+    kind, key = signature
     if normalized in SENSITIVE_ADD_COMMANDS:
-        kind, key = signature
+        if key in sensitive:
+            await message.reply_text(
+                f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> {html.escape(kind)} از قبل در لیست حساسیت می‌باشد.</b>',
+                parse_mode=ParseMode.HTML,
+            )
+            raise ApplicationHandlerStop()
+
         sensitive[key] = {
             "kind": kind,
             "message_id": replied.message_id,
@@ -147,13 +154,18 @@ async def _handle_sensitive_command(update: Update, context: ContextTypes.DEFAUL
             parse_mode=ParseMode.HTML,
         )
     else:
-        _, key = signature
-        if key in sensitive:
-            sensitive.pop(key, None)
-            mark_db_dirty()
-            save_db(force=True)
+        if key not in sensitive:
+            await message.reply_text(
+                f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> {html.escape(kind)} از قبل در لیست حساسیت نبود.</b>',
+                parse_mode=ParseMode.HTML,
+            )
+            raise ApplicationHandlerStop()
+
+        sensitive.pop(key, None)
+        mark_db_dirty()
+        save_db(force=True)
         await message.reply_text(
-            f'<b><tg-emoji emoji-id="{SENSITIVE_REMOVE_EMOJI}">🔴</tg-emoji> {html.escape(signature[0])} با موفقیت از لیست حساسیت حذف گردید.</b>',
+            f'<b><tg-emoji emoji-id="{SENSITIVE_REMOVE_EMOJI}">🔴</tg-emoji> {html.escape(kind)} با موفقیت از لیست حساسیت حذف گردید.</b>',
             parse_mode=ParseMode.HTML,
         )
 
