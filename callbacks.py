@@ -284,6 +284,38 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
      # WHISPER (NAJVA) CALLBACKS
+    elif data.startswith("wh_preview:"):
+        w_id = data.replace("wh_preview:", "")
+        whispers = db.get("whispers", {})
+        if w_id not in whispers:
+            await query.answer("این نجوا منقضی یا حذف شده است!", show_alert=True)
+            return
+        w_data = whispers[w_id]
+        if query.from_user.id != int(w_data.get("sender_id", 0)):
+            await query.answer("فضول نباش! این نجوا مال تو نیست.", show_alert=True)
+            return
+        display_target = (
+            f"@{w_data.get('target_username')}" if w_data.get('target_username') else str(w_data.get('target_uid'))
+        )
+        preview_text = (
+            f'<b><tg-emoji emoji-id="5819051035284479206">🚨</tg-emoji> شما درحال ارسال نجوا به کاربر {html.escape(display_target)} می‌باشید.</b>\n'
+            f'<b>محتوای نجوا:</b>\n<b>{html.escape(str(w_data.get("text", "")))}</b>\n\n'
+            f'<b>آیا عملیات را تایید می‌کنید؟</b>'
+        )
+        preview_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("خواندن قبل تایید", callback_data=f"wh_preview:{w_id}", style="primary", icon_custom_emoji_id="5843493805835165294")],
+            [
+                InlineKeyboardButton("تایید ارسال", callback_data=f"wh_confirm:{w_id}", style="success", icon_custom_emoji_id="6084779072750097974"),
+                InlineKeyboardButton("حذف نجوا", callback_data=f"wh_del:{w_id}", style="danger", icon_custom_emoji_id="5819154526816444042")
+            ]
+        ])
+        try:
+            await query.edit_message_text(preview_text, reply_markup=preview_kb, parse_mode=ParseMode.HTML)
+            await query.answer()
+        except Exception:
+            await query.answer(str(w_data.get("text", ""))[:190], show_alert=True)
+        return
+
     elif data.startswith("wh_confirm:"):
         w_id = data.replace("wh_confirm:", "")
         whispers = db.get("whispers", {})
@@ -436,10 +468,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         mark_db_dirty()
         save_db(force=True)
 
-        await query.answer(" نجوای شما با موفقیت حذف شد.", show_alert=True)
+        await query.answer("نجوا با موفقیت حذف شد.", show_alert=True)
 
         try:
-            del_text = '<b><tg-emoji emoji-id="5818716826699307883">❗️</tg-emoji> این نجوا توسط فرستنده حذف گردید.</b>'
+            del_text = '<b><tg-emoji emoji-id="5884330316230827477">💥</tg-emoji> نجوا با موفقیت توسط ارسال کننده حذف گردید.</b>'
             await query.edit_message_text(del_text, reply_markup=None, parse_mode=ParseMode.HTML)
         except Exception:
             pass
@@ -1886,6 +1918,17 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             winner_name = game["p2_name"] if user_id == game["p1_id"] else game["p1_name"]
             
             del games[game_id]
+            g = get_group_data(db, query.message.chat.id)
+            history = g.setdefault("game_history", [])
+            history.append({
+                "type": "xo", "game_id": game_id, "result": "surrender",
+                "surrender_user_id": int(user_id), "winner_id": int(winner_id),
+                "p1_id": game.get("p1_id"), "p2_id": game.get("p2_id"),
+                "p1_name": game.get("p1_name"), "p2_name": game.get("p2_name"),
+                "created_at": game.get("created_at", time.time()), "finished_at": time.time(),
+            })
+            if len(history) > 500:
+                del history[:-500]
             mark_db_dirty()
             save_db()
 
@@ -1930,8 +1973,23 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             winner_symbol = check_xo_winner(game["board"])
 
             if winner_symbol:
-                # Finished games do not need to remain in the persistent DB.
+                # Finished games do not need to remain in the live-game store,
+                # but their result is retained in the group's activity history.
                 del db["xo_games"][game_id]
+                g = get_group_data(db, query.message.chat.id)
+                history = g.setdefault("game_history", [])
+                result_entry = {
+                    "type": "xo", "game_id": game_id,
+                    "result": winner_symbol, "p1_id": game.get("p1_id"), "p2_id": game.get("p2_id"),
+                    "p1_name": game.get("p1_name"), "p2_name": game.get("p2_name"),
+                    "board": list(game.get("board", [])),
+                    "created_at": game.get("created_at", time.time()), "finished_at": time.time(),
+                }
+                if winner_symbol != "draw":
+                    result_entry["winner_id"] = int(game["p1_id"] if winner_symbol == "O" else game["p2_id"])
+                history.append(result_entry)
+                if len(history) > 500:
+                    del history[:-500]
                 mark_db_dirty()
                 save_db()
 
