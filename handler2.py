@@ -29,27 +29,26 @@ TAG_RECENT_EMOJI_ID = "5965216078106729238"
 TAG_CLOSE_EMOJI_ID = "5983093054842606366"
 
 
-def _tag_panel_keyboard(user_id: int, source_message_id: int | None = None):
-    source = int(source_message_id) if source_message_id is not None else 0
+def _tag_panel_keyboard(user_id: int):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
             "تگ کاربران مقام‌دار",
-            callback_data=f"tag_panel:managers:{int(user_id)}:{source}",
+            callback_data=f"tag_panel:managers:{int(user_id)}",
             icon_custom_emoji_id=TAG_MANAGER_EMOJI_ID,
         )],
         [InlineKeyboardButton(
             "تگ 50 کاربر اخیر",
-            callback_data=f"tag_panel:recent50:{int(user_id)}:{source}",
+            callback_data=f"tag_panel:recent50:{int(user_id)}",
             icon_custom_emoji_id=TAG_RECENT_EMOJI_ID,
         )],
         [InlineKeyboardButton(
             "تگ 300 کاربر اخیر",
-            callback_data=f"tag_panel:recent300:{int(user_id)}:{source}",
+            callback_data=f"tag_panel:recent300:{int(user_id)}",
             icon_custom_emoji_id=TAG_RECENT_EMOJI_ID,
         )],
         [InlineKeyboardButton(
             "بستن",
-            callback_data=f"tag_panel:close:{int(user_id)}:{source}",
+            callback_data=f"tag_panel:close:{int(user_id)}",
             style="danger",
             icon_custom_emoji_id=TAG_CLOSE_EMOJI_ID,
         )],
@@ -62,72 +61,117 @@ def _tag_display(user_id: int, username: str, fullname: str) -> str:
 
 
 async def _collect_recent_tag_users(context, chat_id: int, db: dict, limit: int):
-    """Collect newest unique users Goodi has observed in this group."""
+    """Collect up to ``limit`` unique recent group users, newest first.
+
+    Telegram has no Bot API method for listing every group member.  For the
+    "recent" modes we therefore use users Goodi has actually observed in this
+    group (recent activity + message history) first.  A live get_chat_member
+    check is used when available, but a temporary API/cache failure must not
+    make a user who just sent a message disappear from the tag list.
+    """
     g_data = get_group_data(db, chat_id)
     member_count = None
     try:
         member_count = int(await context.bot.get_chat_member_count(chat_id))
     except Exception:
-        logger.warning("Could not get member count for tag | chat_id=%s", chat_id)
+        logger.exception("Could not get member count for tag | chat_id=%s", chat_id)
 
-    target_limit = min(limit, member_count) if member_count is not None else limit
+    target_limit = limit
+    if member_count is not None and member_count < target_limit:
+        target_limit = member_count
+
     candidates = []
-    seen = set()
+    seen_candidates = set()
     activity_ids = set()
 
-    def add(uid, info=None, activity=False):
+    def add_candidate(uid, info=None, activity=False):
         try:
-            uid = int(uid)
+            uid_int = int(uid)
         except (TypeError, ValueError):
             return
-        if uid <= 0 or uid in seen:
+        if uid_int <= 0 or uid_int in seen_candidates:
             return
-        seen.add(uid)
+        seen_candidates.add(uid_int)
         if activity:
-            activity_ids.add(uid)
+            activity_ids.add(uid_int)
         info = info if isinstance(info, dict) else {}
-        candidates.append((uid, info.get("username", ""), info.get("fullname", info.get("user_name", "کاربر"))))
+        candidates.append((
+            uid_int,
+            info.get("username", ""),
+            info.get("fullname", info.get("user_name", "کاربر")),
+        ))
 
+    # Newest unique activity first.
     recent = db.get("recent_active_users", {}).get(str(chat_id), []) or []
     if isinstance(recent, dict):
         recent = list(recent.items())
-    for uid, info in reversed(recent):
-        add(uid, info, activity=True)
+    for entry in reversed(recent):
+        try:
+            uid, info = entry
+        except (TypeError, ValueError):
+            continue
+        add_candidate(uid, info, activity=True)
 
-    for item in reversed(g_data.get("message_logs", []) or []):
-        if isinstance(item, dict):
-            add(item.get("user_id"), {
-                "username": item.get("username", ""),
-                "fullname": item.get("user_name", "کاربر"),
-            }, activity=True)
+    # Message history is also a reliable record that the user has actually
+    # spoken in this group.  Use it as a fallback/extra source for older users.
+    logs = g_data.get("message_logs", []) or []
+    for item in reversed(logs):
+        if not isinstance(item, dict):
+            continue
+        add_candidate(item.get("user_id"), {
+            "username": item.get("username", ""),
+            "fullname": item.get("user_name", "کاربر"),
+        }, activity=True)
 
+    # Per-group records and the global cache are fallback sources only.
     for uid, info in reversed(list((g_data.get("user_records", {}) or {}).items())):
-        add(uid, info)
+        cached = db.get("members", {}).get(str(uid), {}) or {}
+        add_candidate(uid, cached if cached else info, activity=False)
 
-    # If the group is small, expand to every known member record so the bot
-    # does not stop after the one user it happened to see most recently.
     if member_count is not None and member_count <= limit:
         for uid, info in (db.get("members", {}) or {}).items():
-            add(uid, info)
+            add_candidate(uid, info, activity=False)
 
     result = []
     for uid, username, fullname in candidates:
-        try:
-            member = await cached_chat_member(context, chat_id, uid)
-            status = getattr(member, "status", None)
-            if status not in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
+        # A user observed sending a message in this exact group is already
+        # proven to be a group participant.  Do not discard that user merely
+        # because get_chat_member is temporarily unavailable or its cache is
+        # stale.  For cache-only users we still require a live membership check.
+        if uid in activity_ids:
+            try:
+                member = await cached_chat_member(context, chat_id, uid)
+                user_obj = getattr(member, "user", None)
+                if getattr(member, "status", None) in (
+                    ChatMemberStatus.MEMBER,
+                    ChatMemberStatus.ADMINISTRATOR,
+                    ChatMemberStatus.OWNER,
+                ):
+                    username = getattr(user_obj, "username", None) or username
+                    fullname = getattr(user_obj, "full_name", None) or fullname or "کاربر"
+            except Exception:
+                # Keep the observed user with the stored username/name.
+                pass
+            result.append((uid, username, fullname or "کاربر"))
+        else:
+            try:
+                member = await cached_chat_member(context, chat_id, uid)
+                if member.status not in (
+                    ChatMemberStatus.MEMBER,
+                    ChatMemberStatus.ADMINISTRATOR,
+                    ChatMemberStatus.OWNER,
+                ):
+                    continue
+                user_obj = getattr(member, "user", None)
+                username = getattr(user_obj, "username", None) or username
+                fullname = getattr(user_obj, "full_name", None) or fullname or "کاربر"
+                result.append((uid, username, fullname))
+            except Exception:
                 continue
-            user_obj = getattr(member, "user", None)
-            username = getattr(user_obj, "username", None) or username
-            fullname = getattr(user_obj, "full_name", None) or fullname or "کاربر"
-        except Exception:
-            # For users who actually appeared in this group's activity log,
-            # keep the persisted identity if Telegram's lookup temporarily fails.
-            if uid not in activity_ids:
-                continue
-        result.append((uid, username, fullname or "کاربر"))
+
         if len(result) >= target_limit:
             break
+
     return result
 
 
@@ -195,17 +239,30 @@ async def _send_tagged_users(update_or_message, users, prefix="", reply_to_messa
     if not users:
         await update_or_message.reply_text("کاربری برای تگ کردن پیدا نشد.")
         return
-    # Exactly six tagged users per Telegram message.
-    for offset in range(0, len(users), 6):
-        group = users[offset:offset + 6]
-        chunk = prefix
-        for uid, username, fullname in group:
-            token = _tag_display(uid, username, fullname)
-            chunk = f"{chunk} - {token}" if chunk else token
+
+    # Keep the tag output predictable: exactly 6 users per Telegram message.
+    # This is intentionally independent of Telegram's character limit; if a
+    # display name is long, each six-user batch is still kept together.
+    chunks = []
+    batch = []
+    for uid, username, fullname in users:
+        batch.append(_tag_display(uid, username, fullname))
+        if len(batch) == 6:
+            chunks.append(" - ".join(batch))
+            batch = []
+    if batch:
+        chunks.append(" - ".join(batch))
+
+    for chunk in chunks:
         reply_kwargs = {}
         if reply_to_message_id is not None:
             reply_kwargs["reply_parameters"] = ReplyParameters(message_id=int(reply_to_message_id))
-        await update_or_message.reply_text(chunk, parse_mode=ParseMode.HTML, disable_web_page_preview=True, **reply_kwargs)
+        await update_or_message.reply_text(
+            chunk,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+            **reply_kwargs,
+        )
 
 
 async def _open_tag_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -233,7 +290,7 @@ async def _open_tag_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         panel_kwargs["reply_parameters"] = ReplyParameters(message_id=int(replied.message_id))
     await message.reply_text(
         panel_text,
-        reply_markup=_tag_panel_keyboard(user_id, getattr(replied, "message_id", None)),
+        reply_markup=_tag_panel_keyboard(user_id),
         parse_mode=ParseMode.HTML,
         **panel_kwargs,
     )
