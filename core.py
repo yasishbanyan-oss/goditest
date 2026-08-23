@@ -222,7 +222,7 @@ FUN_NAMED_PATTERN = re.compile(r"^\s*ناموسی\s+بده(?:\s+(?P<count>\d+))?
 FUN_NORMAL_PATTERN = re.compile(r"^\s*فحش\s+بده(?:\s+(?P<count>\d+))?\s*$", re.IGNORECASE)
 
 LOCK_COMMAND_PATTERN = re.compile(
-    r"^(?:گودی\s+)?(?:(?:(قفل|ببند|باز\s*کن|حذف\s*قفل|بازکردن\s*قفل)\s+(.+))|(?:(.+?)\s+(رو|را)?\s*(قفل\s*کن|ببند|باز\s*کن)))$",
+    r"^(?:گودی\s+)?(?:(?:(قفل|ببند|باز\s*کن|حذف\s*قفل|بازکردن\s*قفل)\s+(.+))|(?:(.+?)\s+(رو|را)?\s*(قفل\s*کن|ببند|باز\s*کن|حذف\s*قفل|بازکردن\s*قفل)))$",
     re.IGNORECASE
 )
 
@@ -309,12 +309,20 @@ WORLD_COUNTRIES = {
     }
 }
 
+# Common Persian profanity terms used by the «فحش» lock. Matching is
+# normalization-based so punctuation/zero-width characters cannot trivially
+# bypass the lock.
+PROFANITY_TERMS = {
+    "کیر", "کیرم", "کص", "کس", "کون", "کونی", "کصکش", "کسکش",
+    "کصخل", "کصخلها", "کصخل", "جنده", "جنده‌گی", "جندهگی",
+    "مادرجنده", "مادر جنده", "حرومزاده", "حروم زاده", "حرومزاده",
+    "بی‌شرف", "بیشرف", "بی ناموس", "بیناموس", "نامرد", "لاشخور",
+    "گوه", "گوهی", "گوه بخور", "گوه‌خور", "گوهخور", "ریدن", "ریدی",
+    "عن", "عنتر", "چس", "چسی", "دیوث", "دیوثی", "فاحشه", "هرزه",
+}
 ALL_LOCKS = {
-    # The old "mention" / "tag" locks are intentionally replaced by the
-    # requested long-message and profanity locks.  "username" remains the
-    # username lock.
-    "scroll": {"name": "طومار", "page": 1},
-    "profanity": {"name": "فحش", "page": 1},
+    "mention": {"name": "فحش", "page": 1},
+    "tag": {"name": "طومار", "page": 1},
     "spoiler": {"name": "اسپویلر", "page": 1},
     "video": {"name": "فیلم", "page": 1},
     "photo": {"name": "عکس", "page": 1},
@@ -351,8 +359,8 @@ TELEGRAM_SERVICE_LOCK_KEYS = [
 ]
 
 LOCK_TEXT_ALIASES = {
-    "طومار": "scroll", "طومارها": "scroll",
-    "فحش": "profanity", "فحشها": "profanity", "ناسزا": "profanity",
+    "فحش": "mention", "فحشها": "mention", "فحش‌ها": "mention",
+    "طومار": "tag", "طومارها": "tag",
     "اسپویلر": "spoiler", "اسپویل": "spoiler",
     "فیلم": "video", "ویدیو": "video", "ویدئو": "video",
     "عکس": "photo", "تصویر": "photo",
@@ -373,7 +381,6 @@ LOCK_TEXT_ALIASES = {
     "فارسی": "persian", "پارسی": "persian",
     "هشتگ": "hashtag", "تگ هشتگ": "hashtag",
     "یوزرنیم": "username", "ایدی": "username", "آیدی": "username",
-    "نجوا": "whisper", "نجواها": "whisper",
     "پیام ورود با لینک": "service_join_link", "ورود با لینک": "service_join_link",
     "پیام افزودن عضو": "service_add_member", "افزودن عضو": "service_add_member",
     "پیام سنجاق شدن": "service_pinned", "پیام پین": "service_pinned",
@@ -405,108 +412,6 @@ DEFAULT_POEMS = [
     "نه جانی ماند و نه دلداری ماند، {name} ماند و یک کونِ بادکرده!"
 ]
 
-PROFANITY_TERMS = [
-    "مادرجنده", "مادر جنده", "حرومزاده", "حروم زاده", "بیناموس", "بی ناموس",
-    "کسکش", "کصکش", "کصخل", "کسخل", "کیرخور", "کیرم", "کیرت", "کیرش",
-    "کیر", "کصم", "کصت", "کص", "کونی", "کونم", "کونت", "کونش", "کون",
-    "جنده", "لاشی", "عوضی", "گوه", "گه", "گوه بخور", "دیوث", "فاحشه",
-    "هرزه", "جاکش", "جق", "عن", "عنتر", "دهن سرویس",
-]
-
-def _normalize_sensitive_text(text: str) -> str:
-    value = unicodedata.normalize("NFKC", text or "").lower()
-    value = value.replace("ي", "ی").replace("ى", "ی").replace("ك", "ک")
-    value = re.sub(r"[\u200b\u200c\u200d\ufeff]+", "", value)
-    value = re.sub(r"[^\w\u0600-\u06FF]+", " ", value, flags=re.UNICODE)
-    value = re.sub(r"\s+", " ", value).strip()
-    return value
-
-
-def normalize_profanity_text(text: str) -> str:
-    value = unicodedata.normalize("NFKC", text or "").lower()
-    value = value.replace("ي", "ی").replace("ى", "ی").replace("ك", "ک")
-    value = re.sub(r"[\u200b\u200c\u200d\ufeff]+", "", value)
-    value = re.sub(r"[^\w\u0600-\u06FF]+", " ", value, flags=re.UNICODE)
-    value = re.sub(r"\s+", " ", value).strip()
-    return value
-
-
-def contains_profanity(text: str) -> bool:
-    normalized = normalize_profanity_text(text)
-    if not normalized:
-        return False
-    compact = normalized.replace(" ", "")
-    for term in PROFANITY_TERMS:
-        term_n = normalize_profanity_text(term)
-        if not term_n:
-            continue
-        # Prefer whole-token matches to avoid false positives such as "کسی"
-        # when the blocked word is the standalone "کس". The compact check is
-        # still used for multi-word/evasion forms such as "مادرجنده".
-        if re.search(rf"(?<![\w\u0600-\u06FF]){re.escape(term_n)}(?![\w\u0600-\u06FF])", normalized):
-            return True
-        if len(term_n.replace(" ", "")) >= 4 and term_n.replace(" ", "") in compact:
-            return True
-    return False
-
-
-def get_message_sensitive_signature(message) -> tuple[str, str] | None:
-    """Return a stable signature for a text/media message used by حساس شو."""
-    if not message:
-        return None
-    if getattr(message, "text", None) is not None:
-        return ("text", _normalize_sensitive_text(message.text))
-    media_fields = (
-        ("photo", getattr(message, "photo", None)),
-        ("video", getattr(message, "video", None)),
-        ("animation", getattr(message, "animation", None)),
-        ("sticker", getattr(message, "sticker", None)),
-        ("voice", getattr(message, "voice", None)),
-        ("audio", getattr(message, "audio", None)),
-        ("document", getattr(message, "document", None)),
-        ("video_note", getattr(message, "video_note", None)),
-    )
-    for kind, obj in media_fields:
-        if obj:
-            if kind == "photo":
-                file_id = obj[-1].file_unique_id if getattr(obj[-1], "file_unique_id", None) else obj[-1].file_id
-            else:
-                file_id = getattr(obj, "file_unique_id", None) or getattr(obj, "file_id", None)
-            if file_id:
-                return (kind, str(file_id))
-    if getattr(message, "caption", None) is not None:
-        return ("text", _normalize_sensitive_text(message.caption))
-    return None
-
-
-def sensitive_content_label(message) -> str:
-    if getattr(message, "text", None) is not None or getattr(message, "caption", None) is not None:
-        return "پیام"
-    if getattr(message, "animation", None): return "گیف"
-    if getattr(message, "photo", None): return "عکس"
-    if getattr(message, "video", None): return "ویدیو"
-    if getattr(message, "sticker", None): return "استیکر"
-    if getattr(message, "voice", None): return "ویس"
-    if getattr(message, "audio", None): return "آهنگ"
-    if getattr(message, "document", None): return "فایل"
-    if getattr(message, "video_note", None): return "ویدیو نوت"
-    return "پیام"
-
-
-def is_whisper_message(message, bot_id: int | None = None) -> bool:
-    """Detect Goodi inline-whisper messages without relying on visible text."""
-    via_bot = getattr(message, "via_bot", None)
-    if via_bot is not None and (bot_id is None or getattr(via_bot, "id", None) == int(bot_id)):
-        return True
-    markup = getattr(message, "reply_markup", None)
-    for row in getattr(markup, "inline_keyboard", []) or []:
-        for button in row:
-            data = getattr(button, "callback_data", None) or ""
-            if str(data).startswith(("wh_confirm:", "wh_read:", "wh_del:")):
-                return True
-    return False
-
-
 def get_default_locks_structure() -> dict:
     return {k: False for k in ALL_LOCKS.keys() if not ALL_LOCKS[k].get("is_category")}
 
@@ -533,8 +438,7 @@ def get_default_group_structure() -> dict:
         "muted_users": {},
         "banned_users": {},
         "filter_words": [],
-        "sensitive_contents": [],
-        "game_history": []
+        "sensitive_items": {}
     }
 
 def get_default_db_structure() -> dict:
@@ -624,14 +528,9 @@ def migrate_db_if_needed(data: dict) -> dict:
         if "locks" not in g_val or not isinstance(g_val["locks"], dict):
             g_val["locks"] = get_default_locks_structure()
         else:
-            # The old tag/mention locks were replaced by طومار/فحش.  Do not
-            # carry their old enabled state into the new semantics.
-            g_val["locks"].pop("tag", None)
-            g_val["locks"].pop("mention", None)
             for lk in ALL_LOCKS.keys():
                 if not ALL_LOCKS[lk].get("is_category") and lk not in g_val["locks"]:
                     g_val["locks"][lk] = False
-        g_val.setdefault("sensitive_contents", [])
 
     new_db["version"] = 5
     return new_db
@@ -765,22 +664,17 @@ def get_group_data(db: dict, chat_id: int | str) -> dict:
         if "filter_words" not in groups[cid_str] or not isinstance(groups[cid_str]["filter_words"], list):
             groups[cid_str]["filter_words"] = []
             mark_db_dirty()
+        if "sensitive_items" not in groups[cid_str] or not isinstance(groups[cid_str]["sensitive_items"], dict):
+            groups[cid_str]["sensitive_items"] = {}
+            mark_db_dirty()
         if "locks" not in groups[cid_str] or not isinstance(groups[cid_str]["locks"], dict):
             groups[cid_str]["locks"] = get_default_locks_structure()
             mark_db_dirty()
         else:
-            groups[cid_str]["locks"].pop("tag", None)
-            groups[cid_str]["locks"].pop("mention", None)
             for lk in ALL_LOCKS.keys():
                 if not ALL_LOCKS[lk].get("is_category") and lk not in groups[cid_str]["locks"]:
                     groups[cid_str]["locks"][lk] = False
                     mark_db_dirty()
-        if "sensitive_contents" not in groups[cid_str] or not isinstance(groups[cid_str]["sensitive_contents"], list):
-            groups[cid_str]["sensitive_contents"] = []
-            mark_db_dirty()
-        if "game_history" not in groups[cid_str] or not isinstance(groups[cid_str]["game_history"], list):
-            groups[cid_str]["game_history"] = []
-            mark_db_dirty()
     return groups[cid_str]
 
 PERSIAN_NUMBER_WORDS = {"یک": 1, "يك": 1, "دو": 2, "سه": 3, "چهار": 4, "پنج": 5, "شش": 6, "هفت": 7, "هشت": 8, "نه": 9, "ده": 10}
