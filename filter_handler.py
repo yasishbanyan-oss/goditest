@@ -323,6 +323,25 @@ def _clear_filter_panel_session(db, user_id):
     db.setdefault("states", {}).setdefault("filter_panel", {}).pop(_session_key(user_id), None)
     mark_db_dirty()
 
+def _clear_filter_feature_states(db, user_id):
+    """Invalidate every pending filter flow when the user presses Back.
+
+    Without this, a stale filter_add/filter_delete state could consume the
+    user's next ordinary group message after leaving the panel.
+    """
+    states = db.setdefault("states", {})
+    uid = str(user_id)
+    changed = False
+    for state_name in ("filter_add", "filter_delete", "filter_cleanup"):
+        bucket = states.setdefault(state_name, {})
+        if uid in bucket:
+            bucket.pop(uid, None)
+            changed = True
+    _clear_filter_panel_session(db, user_id)
+    if changed:
+        mark_db_dirty()
+    save_db(force=True)
+
 async def _owns_filter_panel(query, context, db, chat_id):
     user_id = query.from_user.id
     if not await _filter_panel_allowed(context, chat_id, user_id):
@@ -461,9 +480,9 @@ async def _show_filter_add_menu(query, context, chat_id, db):
 def _filter_duration_keyboard(chat_id, minutes):
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("−", callback_data=f"filter_temp_dec:{chat_id}", style="danger", icon_custom_emoji_id=FILTER_WARN_EMOJI),
+            InlineKeyboardButton("\u200b", callback_data=f"filter_temp_dec:{chat_id}", style="danger", icon_custom_emoji_id=WARN_MINUS_EMOJI),
             InlineKeyboardButton(_duration_label(minutes), callback_data=f"filter_temp_noop:{chat_id}", style="primary"),
-            InlineKeyboardButton("+", callback_data=f"filter_temp_inc:{chat_id}", style="success", icon_custom_emoji_id=FILTER_ADD_EMOJI)
+            InlineKeyboardButton("\u200b", callback_data=f"filter_temp_inc:{chat_id}", style="success", icon_custom_emoji_id=WARN_PLUS_EMOJI)
         ],
         [InlineKeyboardButton("ثبت و ادامه", callback_data=f"filter_temp_confirm:{chat_id}", style="success", icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID)],
         [InlineKeyboardButton("⬅️ بازگشت", callback_data=f"filter_add_back:{chat_id}", style="danger", icon_custom_emoji_id=FILTER_BACK_EMOJI)]
@@ -1061,6 +1080,9 @@ async def handle_filter_callback(query, context, db):
         if not session or int(session.get("chat_id", 0)) != cid or int(session.get("message_id", 0)) != int(query.message.message_id):
             await query.answer("این پنل برای شما نیست.", show_alert=True)
             return True
+        # Back closes the current filter flow. The list panel will establish a
+        # fresh ownership session if the user opens Filters again.
+        _clear_filter_feature_states(db, user_id)
         await _render_filter_lists(query, context, cid, db)
         await query.answer()
         return True
@@ -1069,6 +1091,7 @@ async def handle_filter_callback(query, context, db):
         if parts[0] == "filter_add_back":
             if not await _owns_filter_panel(query, context, db, cid):
                 return True
+            _clear_filter_feature_states(db, user_id)
             await render_filter_panel(query, context, cid, db)
             await query.answer()
             return True
@@ -1179,7 +1202,7 @@ async def handle_filter_callback(query, context, db):
     if parts[0] == "filter_delete_back":
         if not await _owns_filter_panel(query, context, db, cid):
             return True
-        db.setdefault("states", {}).setdefault("filter_delete", {}).pop(str(user_id), None)
+        _clear_filter_feature_states(db, user_id)
         await render_filter_panel(query, context, cid, db)
         await query.answer()
         return True
@@ -1201,6 +1224,7 @@ async def handle_filter_callback(query, context, db):
     if parts[0] == "filter_cleanup_cancel":
         if not await _owns_filter_panel(query, context, db, cid):
             return True
+        _clear_filter_feature_states(db, user_id)
         await render_filter_panel(query, context, cid, db)
         await query.answer()
         return True
