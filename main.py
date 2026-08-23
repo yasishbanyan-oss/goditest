@@ -1,9 +1,9 @@
 # GoodiBot entry point
 import core
 import services, permissions, moderation, management, welcome, comments, jobs, links
-import panels, games, whisper, callbacks, callbacks2, handlers, handler2, support, help, fun, filter_handler, auto_responses, backup_restore, start_handler
+import panels, games, whisper, callbacks, callbacks2, handlers, handler2, support, help, fun, filter_handler, auto_responses, backup_restore, start_handler, sensitive
 
-registry = core.bind_all_modules([services, permissions, moderation, management, welcome, comments, jobs, links, panels, games, whisper, callbacks, callbacks2, handlers, handler2, support, help, fun, filter_handler, auto_responses, backup_restore, start_handler])
+registry = core.bind_all_modules([services, permissions, moderation, management, welcome, comments, jobs, links, panels, games, whisper, callbacks, callbacks2, handlers, handler2, support, help, fun, filter_handler, auto_responses, backup_restore, start_handler, sensitive])
 globals().update(registry)
 from core import *
 
@@ -19,6 +19,10 @@ def main():
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(MessageHandler(filters.ALL, global_security_guard), group=-10)
     app.add_handler(CallbackQueryHandler(global_security_guard), group=-10)
+    # Sensitive-content commands and enforcement run before normal group locks,
+    # so protected content cannot be bypassed by another active lock.
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.TEXT & (~filters.COMMAND), _handle_sensitive_command), group=-9)
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.ALL, enforce_sensitive_content), group=-8)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.ALL, enforce_group_locks), group=-5)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.UpdateType.EDITED_MESSAGE, enforce_group_locks), group=-5)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.TEXT & (~filters.COMMAND), handle_welcome_text_command), group=-4)
