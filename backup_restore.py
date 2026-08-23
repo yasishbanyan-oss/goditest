@@ -74,6 +74,156 @@ def _build_backup_bytes(db: dict) -> tuple[io.BytesIO, str]:
     return stream, filename
 
 
+def _value_mentions_chat(value, chat_id: int) -> bool:
+    """Recursively detect a group id in a stored record."""
+    target = str(chat_id)
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in ("chat_id", "group_id", "target_chat_id") and str(item) == target:
+                return True
+            if _value_mentions_chat(item, chat_id):
+                return True
+    elif isinstance(value, (list, tuple)):
+        return any(_value_mentions_chat(item, chat_id) for item in value)
+    return False
+
+
+def _group_departure_report(db: dict, chat_id: int, reason: str) -> tuple[bytes, str]:
+    g_data = (db.get("groups", {}) or {}).get(str(chat_id), {}) or {}
+    title = g_data.get("title") or "گروه بدون نام"
+
+    lines = [
+        "GOODI GROUP DEPARTURE BACKUP",
+        "============================",
+        f"Group: {title}",
+        f"Chat ID: {chat_id}",
+        f"Reason: {reason}",
+        f"Backup time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        "GROUP DATA",
+        "----------",
+        json.dumps(g_data, ensure_ascii=False, indent=2, default=str),
+        "",
+        "GROUP MESSAGE HISTORY (stored by Goodi)",
+        "--------------------------------------",
+    ]
+
+    message_logs = g_data.get("message_logs", []) or []
+    if message_logs:
+        for idx, item in enumerate(message_logs, 1):
+            lines.extend([
+                f"[{idx}] message_id={item.get('message_id')}",
+                f"user={item.get('user_name', 'کاربر')} | user_id={item.get('user_id')}",
+                f"date={item.get('date', '')}",
+                f"type={item.get('media_type', 'text')}",
+                f"text={item.get('text', '')}",
+                f"file_id={item.get('file_id', '')}",
+                "",
+            ])
+    else:
+        lines.append("No stored message history.")
+
+    lines.extend(["", "ADMIN LOGS FOR THIS GROUP", "-------------------------"])
+    admin_logs = [
+        item for item in (db.get("admin_logs", []) or [])
+        if str(item.get("chat_id")) == str(chat_id)
+    ]
+    if admin_logs:
+        for idx, item in enumerate(admin_logs, 1):
+            lines.extend([
+                f"[{idx}] {item.get('timestamp', '')}",
+                f"admin={item.get('admin_name', '')} | admin_id={item.get('admin_id')}",
+                f"action={item.get('action_type', '')}",
+                f"details={item.get('details', '')}",
+                "",
+            ])
+    else:
+        lines.append("No stored admin logs for this group.")
+
+    lines.extend(["", "GROUP-SPECIFIC ACTION / GAME RECORDS", "-------------------------------------"])
+    records_found = False
+    for section_name, store in (
+        ("action_records", db.get("action_records", {}) or {}),
+        ("xo_games", db.get("xo_games", {}) or {}),
+        ("couples", db.get("couples", {}) or {}),
+        ("reports", db.get("reports", {}) or {}),
+    ):
+        matched = []
+        if isinstance(store, dict):
+            for key, value in store.items():
+                if _value_mentions_chat(value, chat_id):
+                    matched.append((key, value))
+        elif isinstance(store, list):
+            matched = [(str(i), value) for i, value in enumerate(store) if _value_mentions_chat(value, chat_id)]
+        if matched:
+            records_found = True
+            lines.append(f"\n[{section_name}]")
+            lines.append(json.dumps(dict(matched), ensure_ascii=False, indent=2, default=str))
+    if not records_found:
+        lines.append("No additional group-specific records were found in global stores.")
+
+    lines.extend([
+        "",
+        "GROUP MEMBERS / USER SNAPSHOT",
+        "-----------------------------",
+    ])
+    member_ids = set()
+    for item in message_logs:
+        try:
+            member_ids.add(int(item.get("user_id")))
+        except Exception:
+            pass
+    for role in ("owners", "admins", "special", "exempt"):
+        for uid in (g_data.get("management", {}) or {}).get(role, []) or []:
+            try:
+                member_ids.add(int(uid))
+            except Exception:
+                pass
+    members = db.get("members", {}) or {}
+    for uid in sorted(member_ids):
+        info = members.get(str(uid), {}) or {}
+        lines.append(
+            f"user_id={uid} | username={info.get('username', '')} | fullname={info.get('fullname', 'کاربر')}"
+        )
+
+    lines.extend([
+        "",
+        "FULL DATABASE GROUP SNAPSHOT (JSON)",
+        "------------------------------------",
+        json.dumps({
+            "group": g_data,
+            "group_admin_logs": admin_logs,
+        }, ensure_ascii=False, indent=2, default=str),
+    ])
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"goodi_group_departure_{chat_id}_{stamp}.txt"
+    return "\n".join(lines).encode("utf-8"), filename
+
+
+async def send_group_departure_backup(bot, db: dict, chat_id: int, reason: str):
+    """Send a readable TXT snapshot to the bot owner when the bot leaves/is removed."""
+    try:
+        raw, filename = _group_departure_report(db, int(chat_id), reason)
+        title = (db.get("groups", {}) or {}).get(str(chat_id), {}).get("title") or "گروه"
+        notice = (
+            f'<b><tg-emoji emoji-id="{BACKUP_EMOJI["backup"]}">💾</tg-emoji> '
+            f'ربات از گروه {html.escape(title)} حذف شد.</b>\n'
+            f'<b>نتایج بکاپ گروه به‌صورت فایل متنی ارسال شد.</b>'
+        )
+        await bot.send_message(chat_id=OWNER_ID, text=notice, parse_mode=ParseMode.HTML)
+        stream = io.BytesIO(raw)
+        stream.name = filename
+        stream.seek(0)
+        await bot.send_document(
+            chat_id=OWNER_ID,
+            document=InputFile(stream, filename=filename),
+            caption=f"بکاپ گروه {title} | {reason}",
+        )
+    except Exception:
+        logger.exception("Could not send group departure backup | chat_id=%s | reason=%s", chat_id, reason)
+
+
 def _extract_restore_data(raw: bytes, filename: str) -> dict:
     name = (filename or "").lower()
     if name.endswith(".zip") or raw[:2] == b"PK":
@@ -95,75 +245,6 @@ def _extract_restore_data(raw: bytes, filename: str) -> dict:
     if "version" not in data:
         raise ValueError("نسخه دیتابیس در فایل پیدا نشد.")
     return migrate_db_if_needed(data)
-
-
-def _build_group_exit_report(db: dict, chat_id: int, reason: str = "حذف/خروج ربات از گروه") -> tuple[io.BytesIO, str]:
-    """Build a complete text snapshot of everything currently persisted for a group."""
-    cid = str(chat_id)
-    group = (db.get("groups", {}) or {}).get(cid, {}) or {}
-    title = group.get("title") or f"گروه {chat_id}"
-
-    # Include the full group record plus all global stores that can reference
-    # the group's users/actions. This is intentionally a text export so the
-    # owner can inspect it even without restoring a database.
-    report = {
-        "group_id": chat_id,
-        "group_title": title,
-        "reason": reason,
-        "exported_at": datetime.now().isoformat(timespec="seconds"),
-        "group_data": group,
-        "group_message_logs": group.get("message_logs", []),
-        "group_management": group.get("management", {}),
-        "group_warnings": group.get("warnings", {}),
-        "group_muted_users": group.get("muted_users", {}),
-        "group_banned_users": group.get("banned_users", {}),
-        "group_filter_words": group.get("filter_words", []),
-        "group_locks": group.get("locks", {}),
-        "group_sensitive_contents": group.get("sensitive_contents", []),
-        "group_game_history": group.get("game_history", []),
-        "group_user_records": group.get("user_records", {}),
-        "group_recent_active_users": (db.get("recent_active_users", {}) or {}).get(cid, []),
-        "group_hourly_messages": (db.get("hourly_messages", {}) or {}).get(cid, {}),
-        "group_user_stats": db.get("user_stats", {}),
-        "group_action_records": db.get("action_records", {}),
-        "group_admin_logs": [
-            x for x in (db.get("admin_logs", []) or [])
-            if isinstance(x, dict) and str(x.get("chat_id")) == cid
-        ],
-        "group_games_snapshot": {
-            "xo_games": db.get("xo_games", {}),
-            "couples": db.get("couples", {}),
-        },
-        "full_database_reference": {
-            "version": db.get("version"),
-            "active_chats": db.get("active_chats", []),
-        },
-    }
-    payload = json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8")
-    stream = io.BytesIO(payload)
-    safe_title = re.sub(r"[^\w\u0600-\u06FF-]+", "_", str(title)).strip("_")[:60] or str(chat_id)
-    filename = f"goodi_group_backup_{safe_title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-    stream.name = filename
-    stream.seek(0)
-    return stream, filename
-
-
-async def send_group_exit_backup(bot, chat_id: int, *, reason: str = "حذف/خروج ربات از گروه"):
-    db = load_db()
-    stream, filename = _build_group_exit_report(db, chat_id, reason=reason)
-    group = (db.get("groups", {}) or {}).get(str(chat_id), {}) or {}
-    title = group.get("title") or f"گروه {chat_id}"
-    caption = (
-        f'<b>{_be("backup", "💾")} ربات از گروه «{html.escape(str(title))}» حذف/عزل شد.</b>\n'
-        f'<b>علت: {html.escape(str(reason))}</b>\n\n'
-        '<b>نتایج بکاپ به شرح اطلاعات ثبت‌شده برای گروه است؛ شامل مدیریت، فیلترها، اخطارها، سکوت‌ها، بن‌ها، تنظیمات، قفل‌ها، فعالیت‌های ثبت‌شده و سوابق پیام/بازی موجود در دیتابیس.</b>'
-    )
-    await bot.send_document(
-        chat_id=int(OWNER_ID),
-        document=InputFile(stream, filename=filename),
-        caption=caption,
-        parse_mode=ParseMode.HTML,
-    )
 
 
 async def send_database_backup(bot, chat_id: int, *, automatic: bool = False):
