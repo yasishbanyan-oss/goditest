@@ -290,6 +290,37 @@ async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE
         if user and (user.is_bot or user.id in special_ids or await is_configured_group_manager(context, chat.id, user.id)):
             return
 
+        # New content locks: طومار, فحش and نجوا. These run before the
+        # ordinary media/text locks and reuse the same privileged-user bypass.
+        text_content = msg.text or msg.caption or ""
+        if not should_delete and locks.get("scroll", False):
+            line_count = len(text_content.splitlines()) if text_content else 0
+            if len(text_content) > 50 or line_count > 5:
+                should_delete = True
+
+        if not should_delete and locks.get("profanity", False):
+            if contains_profanity(text_content):
+                should_delete = True
+
+        if not should_delete and locks.get("whisper", False):
+            if is_whisper_message(msg, getattr(context.bot, "id", None)):
+                should_delete = True
+
+        # Content explicitly marked as sensitive by a group/bot manager is
+        # removed for everyone except the same privileged group. The stored
+        # signature uses file_unique_id for media, so re-uploading the exact
+        # Telegram media is still recognized even if its file_id changes.
+        if not should_delete:
+            sensitive_signature = get_message_sensitive_signature(msg)
+            if sensitive_signature:
+                skind, svalue = sensitive_signature
+                sensitive_items = g_data.get("sensitive_contents", []) or []
+                if any(
+                    isinstance(item, dict) and item.get("kind") == skind and item.get("value") == svalue
+                    for item in sensitive_items
+                ):
+                    should_delete = True
+
         is_edited = update.edited_message is not None
 
         if is_edited:
@@ -321,14 +352,6 @@ async def enforce_group_locks(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             if locks.get("link", False):
                 if any(e.type in [MessageEntityType.URL, MessageEntityType.TEXT_LINK] for e in entities) or URL_REGEX.search(normalize_link_text(text_content)):
-                    should_delete = True
-
-            if not should_delete and locks.get("mention", False):
-                if any(e.type in [MessageEntityType.MENTION, MessageEntityType.TEXT_MENTION] for e in entities):
-                    should_delete = True
-
-            if not should_delete and locks.get("tag", False):
-                if "@" in text_content or any(e.type == MessageEntityType.MENTION for e in entities):
                     should_delete = True
 
             if not should_delete and locks.get("username", False):
