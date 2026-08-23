@@ -17,13 +17,14 @@ async def handle_tag_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return False
 
     parts = data.split(":")
-    if len(parts) != 3:
+    if len(parts) not in (3, 4):
         await query.answer("اطلاعات دکمه نامعتبر است.", show_alert=True)
         return True
 
     action = parts[1]
     try:
         owner_id = int(parts[2])
+        source_message_id = (int(parts[3]) if parts[3] and int(parts[3]) > 0 else None) if len(parts) == 4 else None
     except ValueError:
         await query.answer("اطلاعات دکمه نامعتبر است.", show_alert=True)
         return True
@@ -42,7 +43,10 @@ async def handle_tag_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     try:
         if action == "close":
-            await query.message.edit_text(_tag_close_text(), reply_markup=None, parse_mode=ParseMode.HTML)
+            try:
+                await query.message.delete()
+            except Exception:
+                await query.message.edit_text(_tag_close_text(), reply_markup=None, parse_mode=ParseMode.HTML)
             await query.answer()
             return True
 
@@ -64,12 +68,9 @@ async def handle_tag_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             logger.exception("Could not delete tag panel | chat_id=%s", chat_id)
 
-        # The panel itself is anchored to the original replied message when
-        # the user opened the tag panel as a reply. Reuse that message as the
-        # reply target for every tag result. With no original reply, results
-        # are sent normally (no reply).
-        replied = getattr(query.message, "reply_to_message", None)
-        reply_to_message_id = getattr(replied, "message_id", None) if replied is not None else None
+        # The source message is captured when the panel is opened. This remains
+        # reliable even after the panel itself is deleted.
+        reply_to_message_id = source_message_id
         reply_kwargs = {}
         if reply_to_message_id is not None:
             reply_kwargs["reply_parameters"] = ReplyParameters(message_id=int(reply_to_message_id))
@@ -81,20 +82,12 @@ async def handle_tag_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 **reply_kwargs,
             )
         else:
-            chunks = []
-            current = ""
-            for uid, username, fullname in users:
-                token = _tag_display(uid, username, fullname)
-                candidate = f"{current} - {token}" if current else token
-                if current and len(candidate) > 3800:
-                    chunks.append(current)
-                    current = token
-                else:
-                    current = candidate
-            if current:
-                chunks.append(current)
-
-            for chunk in chunks:
+            for offset in range(0, len(users), 6):
+                group = users[offset:offset + 6]
+                chunk = ""
+                for uid, username, fullname in group:
+                    token = _tag_display(uid, username, fullname)
+                    chunk = f"{chunk} - {token}" if chunk else token
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=chunk,
