@@ -510,30 +510,108 @@ def get_default_db_structure() -> dict:
         }
     }
 
-def migrate_db_if_needed(data: dict) -> dict:
-    if data.get("version") == 5:
-        return data
+def _merge_missing_dict_values(target: dict, defaults: dict):
+    """Recursively add missing keys without overwriting restored/user data."""
+    changed = False
+    for key, default_value in defaults.items():
+        if key not in target:
+            if isinstance(default_value, dict):
+                target[key] = json.loads(json.dumps(default_value, ensure_ascii=False))
+            elif isinstance(default_value, list):
+                target[key] = list(default_value)
+            else:
+                target[key] = default_value
+            changed = True
+        elif isinstance(default_value, dict) and isinstance(target.get(key), dict):
+            if _merge_missing_dict_values(target[key], default_value):
+                changed = True
+    return changed
 
-    logger.info("Migrating database to v5...")
-    new_db = get_default_db_structure()
-    for k, value in data.items():
-        # Preserve every persistent top-level capability, including keys added
-        # by newer modules. Interactive states are intentionally rebuilt by
-        # the existing state migration logic below.
-        if k not in ("version", "states"):
-            new_db[k] = value
 
-    groups = new_db.setdefault("groups", {})
-    for _, g_val in groups.items():
-        if "locks" not in g_val or not isinstance(g_val["locks"], dict):
+def normalize_restored_db(data: dict) -> dict:
+    """Make a restored database structurally complete without overwriting data."""
+    if not isinstance(data, dict):
+        raise ValueError("ساختار دیتابیس معتبر نیست.")
+
+    defaults = get_default_db_structure()
+    _merge_missing_dict_values(data, defaults)
+
+    groups = data.setdefault("groups", {})
+    if not isinstance(groups, dict):
+        groups = {}
+        data["groups"] = groups
+
+    group_defaults = get_default_group_structure()
+    for cid, g_val in list(groups.items()):
+        if not isinstance(g_val, dict):
+            groups[cid] = json.loads(json.dumps(group_defaults, ensure_ascii=False))
+            continue
+
+        _merge_missing_dict_values(g_val, group_defaults)
+
+        locks = g_val.get("locks")
+        if not isinstance(locks, dict):
             g_val["locks"] = get_default_locks_structure()
         else:
-            for lk in ALL_LOCKS.keys():
-                if not ALL_LOCKS[lk].get("is_category") and lk not in g_val["locks"]:
-                    g_val["locks"][lk] = False
+            for lock_key in ALL_LOCKS:
+                if not ALL_LOCKS[lock_key].get("is_category") and lock_key not in locks:
+                    locks[lock_key] = False
 
-    new_db["version"] = 5
-    return new_db
+        management = g_val.get("management")
+        if not isinstance(management, dict):
+            g_val["management"] = json.loads(
+                json.dumps(group_defaults["management"], ensure_ascii=False)
+            )
+        else:
+            _merge_missing_dict_values(management, group_defaults["management"])
+
+        warning_settings = g_val.get("warning_settings")
+        if not isinstance(warning_settings, dict):
+            g_val["warning_settings"] = json.loads(
+                json.dumps(group_defaults["warning_settings"], ensure_ascii=False)
+            )
+        else:
+            _merge_missing_dict_values(warning_settings, group_defaults["warning_settings"])
+
+        if not isinstance(g_val.get("filter_words"), list):
+            g_val["filter_words"] = []
+        if not isinstance(g_val.get("sensitive_items"), dict):
+            g_val["sensitive_items"] = {}
+        if not isinstance(g_val.get("message_logs"), list):
+            g_val["message_logs"] = []
+
+    # Rebuild active_chats from persisted groups as a fallback, while retaining
+    # explicitly stored active chats.
+    active = []
+    for raw_cid in data.get("active_chats", []) or []:
+        try:
+            cid_int = int(raw_cid)
+        except (TypeError, ValueError):
+            continue
+        if cid_int not in active:
+            active.append(cid_int)
+    for raw_cid in groups.keys():
+        try:
+            cid_int = int(raw_cid)
+        except (TypeError, ValueError):
+            continue
+        if cid_int not in active:
+            active.append(cid_int)
+    data["active_chats"] = active
+    data["version"] = 5
+    return data
+
+
+def migrate_db_if_needed(data: dict) -> dict:
+    if not isinstance(data, dict):
+        raise ValueError("ساختار دیتابیس معتبر نیست.")
+
+    old_version = data.get("version")
+    if old_version != 5:
+        logger.info("Migrating database to v5 from version %r...", old_version)
+
+    return normalize_restored_db(data)
+
 
 def load_db() -> dict:
     global _DB_CACHE
@@ -551,9 +629,7 @@ def load_db() -> dict:
         with open(DB_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             data = migrate_db_if_needed(data)
-            for key, val in default_struct.items():
-                if key not in data:
-                    data[key] = val
+            _merge_missing_dict_values(data, default_struct)
             _DB_CACHE = data
             cleanup_expired_states(_DB_CACHE)
             return _DB_CACHE
@@ -651,6 +727,37 @@ def clear_user_all_states(db: dict, user_id: int, chat_id: int | None = None) ->
         mark_db_dirty()
         save_db(force=True)
     return cleared
+
+
+def clear_user_pending_states_for_navigation(db: dict, user_id: int):
+    """Clear unfinished input flows when a panel is left via Back/Close/Cancel.
+
+    The active filter-panel ownership marker is intentionally preserved because
+    the Back callback itself may need it to validate the panel. The next visit
+    to the panel creates a fresh marker for the current message.
+    """
+    uid = str(user_id)
+    states = db.setdefault("states", {})
+    changed = False
+    for state_name, bucket in list(states.items()):
+        if state_name in ("filter_panel",):
+            continue
+        if isinstance(bucket, dict) and uid in bucket:
+            bucket.pop(uid, None)
+            changed = True
+
+    # ban_flow uses a composite user/chat key instead of the plain user id.
+    ban_flow = states.get("ban_flow", {})
+    if isinstance(ban_flow, dict):
+        for key in list(ban_flow):
+            if str(key).startswith(f"{user_id}_"):
+                ban_flow.pop(key, None)
+                changed = True
+
+    if changed:
+        mark_db_dirty()
+        save_db(force=True)
+    return changed
 
 def get_group_data(db: dict, chat_id: int | str) -> dict:
     cid_str = str(chat_id)
