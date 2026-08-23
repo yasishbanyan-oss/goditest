@@ -216,7 +216,25 @@ async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=chat.id, text=welcome_msg, parse_mode=ParseMode.HTML)
         except Exception as e:
             logger.error(f"Failed to send welcome message: {e}")
-    elif new_status in [ChatMemberStatus.LEFT, ChatMemberStatus.BANNED]:
+    elif new_status in [ChatMemberStatus.LEFT, ChatMemberStatus.BANNED] or (
+        result.old_chat_member.status == ChatMemberStatus.ADMINISTRATOR
+        and new_status in [ChatMemberStatus.MEMBER, ChatMemberStatus.RESTRICTED]
+    ):
+        # Export the group's complete persisted snapshot to the bot owner before
+        # removing it from active chats. This also fires when the bot is demoted
+        # from administrator to a normal member, as requested.
+        try:
+            from backup_restore import send_group_exit_backup
+            if new_status == ChatMemberStatus.BANNED:
+                reason = "ربات بن/اخراج شد"
+            elif new_status == ChatMemberStatus.LEFT:
+                reason = "ربات از گروه حذف/خارج شد"
+            else:
+                reason = "ربات از سمت ادمینی عزل شد"
+            await send_group_exit_backup(context.bot, chat.id, reason=reason)
+        except Exception:
+            logger.exception("Automatic group-exit backup failed | chat_id=%s", chat.id)
+
         if chat.id in db["active_chats"]:
             db["active_chats"].remove(chat.id)
             mark_db_dirty()
