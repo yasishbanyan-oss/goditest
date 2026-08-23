@@ -45,7 +45,11 @@ def main():
     app.add_handler(CommandHandler("done", command_done))
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.ALL, handle_filter_messages), group=-3)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.TEXT & (~filters.COMMAND), handle_tag_commands), group=-1)
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), dwoz_message_handler), group=-1)
+    # Keep the game message handler in its own group. The tag handler below
+    # intentionally uses a broad TEXT filter, and PTB only runs the first
+    # matching handler in a handler group; sharing group -1 made «دوز» silently
+    # stop before reaching dwoz_message_handler.
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), dwoz_message_handler), group=-2)
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_goodi_support_message), group=-1)
     app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), handle_messages))
     app.add_error_handler(global_error_handler)
