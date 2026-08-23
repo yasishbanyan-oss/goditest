@@ -242,8 +242,8 @@ def _extract_restore_data(raw: bytes, filename: str) -> dict:
         raise ValueError("بخش گروه‌های دیتابیس معتبر نیست.")
     if not isinstance(data.get("members", {}), dict):
         raise ValueError("بخش کاربران دیتابیس معتبر نیست.")
-    if "version" not in data:
-        raise ValueError("نسخه دیتابیس در فایل پیدا نشد.")
+    # Legacy backups may not have stored a version field. The normalizer can
+    # safely reconstruct the missing schema without discarding persistent data.
     return migrate_db_if_needed(data)
 
 
@@ -379,19 +379,40 @@ async def handle_backup_restore_private_message(update: Update, context: Context
         await tg_file.download_to_memory(buffer)
         data = _extract_restore_data(buffer.getvalue(), filename)
 
-        # Save the validated data atomically. The current DB remains untouched
-        # until validation succeeds.
+        # Interactive states are runtime-only. Restoring them can resurrect an
+        # old filter/add/ban/panel flow and make the first message after restore
+        # get consumed by an obsolete handler. Start those states cleanly.
+        fresh_states = get_default_db_structure().get("states", {})
+        data["states"] = json.loads(json.dumps(fresh_states, ensure_ascii=False))
+        data.pop("_state_timestamps", None)
+        data.pop("_group_panel_sessions", None)
+
+        # Save the validated, normalized data atomically. The current DB remains
+        # untouched until validation succeeds.
         global _DB_CACHE, _DB_DIRTY
         _DB_CACHE = data
         _DB_DIRTY = True
         save_db(force=True)
 
         db = load_db()
+
+        # Any cached Telegram membership objects may belong to the old restored
+        # database state. Clear them so permissions are resolved against the
+        # restored owners/admins instead of stale in-memory values.
+        try:
+            import permissions
+            permissions._MEMBER_CACHE.clear()
+        except Exception:
+            logger.exception("Failed to clear membership cache after restore")
+
+        # Re-register all persisted group jobs, not just groups that happened to
+        # be in the old active_chats list.
         try:
             from jobs import setup_chat_jobs
             setup_chat_jobs(context.application.job_queue, db.get("active_chats", []))
         except Exception:
             logger.exception("Failed to re-register group jobs after database restore")
+
         db.setdefault("states", {}).setdefault(BACKUP_STATE_KEY, {}).pop(str(user.id), None)
         mark_db_dirty()
         save_db(force=True)
