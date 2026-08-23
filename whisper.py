@@ -183,7 +183,8 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
     display_target = f"@{target_uname}" if target_uname else str(target_uid)
     result_title = f" ارسال پیام نجوا به {display_target}"
     result_html = (
-        f'<b><tg-emoji emoji-id="5819051035284479206">🚨</tg-emoji> شما درحال ارسال نجوا به کاربر {html.escape(display_target)} می‌باشید.</b>\n'
+        f'<b><tg-emoji emoji-id="5819051035284479206">🚨</tg-emoji> '
+        f'شما درحال ارسال نجوا به کاربر {html.escape(display_target)} می‌باشید.</b>\n'
         f'<b>آیا عملیات را تایید می‌کنید؟</b>'
     )
 
@@ -194,22 +195,22 @@ async def handle_inline_whisper(update: Update, context: ContextTypes.DEFAULT_TY
                 callback_data=f"wh_preview:{w_id}",
                 style="primary",
                 icon_custom_emoji_id="5843493805835165294"
-            )
-        ],
-        [
+            ),
             InlineKeyboardButton(
                 "تایید ارسال",
                 callback_data=f"wh_confirm:{w_id}",
                 style="success",
-                icon_custom_emoji_id="6084779072750097974"
+                icon_custom_emoji_id="5206607081334906820"
             ),
+        ],
+        [
             InlineKeyboardButton(
                 "حذف نجوا",
                 callback_data=f"wh_del:{w_id}",
                 style="danger",
                 icon_custom_emoji_id="5819154526816444042"
             )
-        ]
+        ],
     ])
 
     results = [
