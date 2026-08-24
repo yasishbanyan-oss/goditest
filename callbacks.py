@@ -22,7 +22,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     # later ordinary message cannot accidentally complete an old operation.
     # Keep filter_panel ownership itself until the filter callback validates it.
     if (
-        not (data or "").lower().startswith("filter_")
+        not (data or "").lower().startswith(("filter_", "sensitive_"))
         and any(token in (data or "").lower() for token in ("back", "close", "cancel"))
     ):
         clear_user_pending_states_for_navigation(db, user_id)
@@ -1124,6 +1124,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 InlineKeyboardButton("اعضای ویژه", callback_data=f"list_special:{cid}", style="primary", icon_custom_emoji_id="6294080753298837622"),
                 InlineKeyboardButton("کلمات فیلتر", callback_data=f"list_filters:{cid}", style="primary", icon_custom_emoji_id="6086622219310470226")
             ],
+            [InlineKeyboardButton("🚫 حساسیت‌ها", callback_data=f"list_sensitive:{cid}", style="primary", icon_custom_emoji_id="5899892335658930224")],
             [
                 InlineKeyboardButton("سکوت‌ شده‌ها", callback_data=f"list_muted:{cid}", style="primary", icon_custom_emoji_id="5886328760218688328"),
                 InlineKeyboardButton("بن‌شده‌ها", callback_data=f"list_banned:{cid}", style="primary", icon_custom_emoji_id="5872823922751185495")
@@ -1173,6 +1174,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 InlineKeyboardButton("اعضای ویژه", callback_data=f"list_special:{cid}", style="primary", icon_custom_emoji_id="6294080753298837622"),
                 InlineKeyboardButton("کلمات فیلتر", callback_data=f"list_filters:{cid}", style="primary", icon_custom_emoji_id="6086622219310470226")
             ],
+            [InlineKeyboardButton("🚫 حساسیت‌ها", callback_data=f"list_sensitive:{cid}", style="primary", icon_custom_emoji_id="5899892335658930224")],
             [
                 InlineKeyboardButton("سکوت‌ شده‌ها", callback_data=f"list_muted:{cid}", style="primary", icon_custom_emoji_id="5886328760218688328"),
                 InlineKeyboardButton("بن‌شده‌ها", callback_data=f"list_banned:{cid}", style="primary", icon_custom_emoji_id="5872823922751185495")
@@ -1218,6 +1220,42 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("آیدی عددی یا یوزرنیم را ارسال کن.")
         await open_check_user_panel(update, context, return_to_advanced=False, edit_message=query.message)
         return
+
+    elif data.startswith("list_sensitive:"):
+        cid = int(data.replace("list_sensitive:", ""))
+        if not await is_configured_group_manager(context, cid, user_id):
+            await query.answer("این پنل برای شما نیست.", show_alert=True); return
+        await render_sensitive_panel(query, context, cid, db); return
+
+    elif data.startswith("sensitive_panel:"):
+        cid = int(data.replace("sensitive_panel:", ""))
+        await render_sensitive_panel(query, context, cid, db); return
+
+    elif data.startswith("sensitive_add:"):
+        cid = int(data.replace("sensitive_add:", ""))
+        await start_sensitive_panel_flow(query, context, cid, "add"); return
+
+    elif data.startswith("sensitive_remove:"):
+        cid = int(data.replace("sensitive_remove:", ""))
+        await start_sensitive_panel_flow(query, context, cid, "remove"); return
+
+    elif data.startswith("sensitive_back:"):
+        cid = int(data.replace("sensitive_back:", ""))
+        if not await is_configured_group_manager(context, cid, user_id):
+            await query.answer("این پنل برای شما نیست.", show_alert=True); return
+        await cancel_sensitive_panel_flow(context, db, user_id)
+        text = await build_group_lists_status(context, cid, db, get_group_data(db, cid))
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("مالکین", callback_data=f"list_owners:{cid}", style="primary", icon_custom_emoji_id="6060078591276749279"), InlineKeyboardButton("مدیران", callback_data=f"list_admins:{cid}", style="primary", icon_custom_emoji_id="6057831537401925660")],
+            [InlineKeyboardButton("اعضای ویژه", callback_data=f"list_special:{cid}", style="primary", icon_custom_emoji_id="6294080753298837622"), InlineKeyboardButton("کلمات فیلتر", callback_data=f"list_filters:{cid}", style="primary", icon_custom_emoji_id="6086622219310470226")],
+            [InlineKeyboardButton("🚫 حساسیت‌ها", callback_data=f"list_sensitive:{cid}", style="primary", icon_custom_emoji_id="5899892335658930224")],
+            [InlineKeyboardButton("سکوت‌ شده‌ها", callback_data=f"list_muted:{cid}", style="primary", icon_custom_emoji_id="5886328760218688328"), InlineKeyboardButton("بن‌شده‌ها", callback_data=f"list_banned:{cid}", style="primary", icon_custom_emoji_id="5872823922751185495")],
+            [InlineKeyboardButton("لیست معاف", callback_data=f"list_exempt:{cid}", style="primary", icon_custom_emoji_id="5884078304729767721"), InlineKeyboardButton("لیست اخطار", callback_data=f"list_warns:{cid}", style="primary", icon_custom_emoji_id="5911318301580991657")],
+            [InlineKeyboardButton("پاسخ‌دهی خودکار", callback_data=f"list_auto_resp:{cid}", style="primary", icon_custom_emoji_id="5859316800361077930"), InlineKeyboardButton("کامنت‌گذاری", callback_data=f"list_comments:{cid}", style="primary", icon_custom_emoji_id="5908745251098473369")],
+            [InlineKeyboardButton("بررسی کاربر", callback_data=f"list_check_user:{cid}", style="primary", icon_custom_emoji_id="5884362854903064294")],
+            [InlineKeyboardButton("بازگشت", callback_data=f"panel_group_main:{cid}", style="danger", icon_custom_emoji_id=BACK_CUSTOM_EMOJI_ID)]
+        ])
+        await query.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML); await query.answer(); return
 
     elif data.startswith("list_detail:"):
         _, list_type, cid_s = data.split(":", 2)
@@ -1466,6 +1504,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 InlineKeyboardButton("اعضای ویژه", callback_data=f"list_special:{cid}", style="primary", icon_custom_emoji_id="6294080753298837622"),
                 InlineKeyboardButton("کلمات فیلتر", callback_data=f"list_filters:{cid}", style="primary", icon_custom_emoji_id="6086622219310470226")
             ],
+            [InlineKeyboardButton("🚫 حساسیت‌ها", callback_data=f"list_sensitive:{cid}", style="primary", icon_custom_emoji_id="5899892335658930224")],
             [
                 InlineKeyboardButton("سکوت‌ شده‌ها", callback_data=f"list_muted:{cid}", style="primary", icon_custom_emoji_id="5886328760218688328"),
                 InlineKeyboardButton("بن‌شده‌ها", callback_data=f"list_banned:{cid}", style="primary", icon_custom_emoji_id="5872823922751185495")
@@ -1535,6 +1574,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 InlineKeyboardButton("اعضای ویژه", callback_data=f"list_special:{cid}", style="primary", icon_custom_emoji_id="6294080753298837622"),
                 InlineKeyboardButton("کلمات فیلتر", callback_data=f"list_filters:{cid}", style="primary", icon_custom_emoji_id="6086622219310470226")
             ],
+            [InlineKeyboardButton("🚫 حساسیت‌ها", callback_data=f"list_sensitive:{cid}", style="primary", icon_custom_emoji_id="5899892335658930224")],
             [
                 InlineKeyboardButton("سکوت‌ شده‌ها", callback_data=f"list_muted:{cid}", style="primary", icon_custom_emoji_id="5886328760218688328"),
                 InlineKeyboardButton("بن‌شده‌ها", callback_data=f"list_banned:{cid}", style="primary", icon_custom_emoji_id="5872823922751185495")
@@ -1565,6 +1605,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         buttons = [
             [InlineKeyboardButton("مالکین", callback_data=f"list_owners:{cid}", style="primary", icon_custom_emoji_id="6060078591276749279"), InlineKeyboardButton("مدیران", callback_data=f"list_admins:{cid}", style="primary", icon_custom_emoji_id="6057831537401925660")],
             [InlineKeyboardButton("اعضای ویژه", callback_data=f"list_special:{cid}", style="primary", icon_custom_emoji_id="6294080753298837622"), InlineKeyboardButton("کلمات فیلتر", callback_data=f"list_filters:{cid}", style="primary", icon_custom_emoji_id="6086622219310470226")],
+            [InlineKeyboardButton("🚫 حساسیت‌ها", callback_data=f"list_sensitive:{cid}", style="primary", icon_custom_emoji_id="5899892335658930224")],
             [InlineKeyboardButton("سکوت‌ شده‌ها", callback_data=f"list_muted:{cid}", style="primary", icon_custom_emoji_id="5886328760218688328"), InlineKeyboardButton("بن‌شده‌ها", callback_data=f"list_banned:{cid}", style="primary", icon_custom_emoji_id="5872823922751185495")],
             [InlineKeyboardButton("لیست معاف", callback_data=f"list_exempt:{cid}", style="primary", icon_custom_emoji_id="5884078304729767721"), InlineKeyboardButton("لیست اخطار", callback_data=f"list_warns:{cid}", style="primary", icon_custom_emoji_id="5911318301580991657")],
             [InlineKeyboardButton("پاسخ‌دهی خودکار", callback_data=f"list_auto_resp:{cid}", style="primary", icon_custom_emoji_id="5859316800361077930"), InlineKeyboardButton("کامنت‌گذاری", callback_data=f"list_comments:{cid}", style="primary", icon_custom_emoji_id="5908745251098473369")],
