@@ -146,10 +146,32 @@ async def _handle_sensitive_command(update: Update, context: ContextTypes.DEFAUL
     db = load_db(); g_data = get_group_data(db, chat.id); sensitive = g_data.setdefault("sensitive_items", {})
     if normalized in SENSITIVE_CLEANUP_COMMANDS:
         if not sensitive:
-            await message.reply_text(f'<b><tg-emoji emoji-id="{PREMIUM_OK_EMOJI}">✔️</tg-emoji> لیست حساسیت از قبل خالی می‌باشد.</b>', parse_mode=ParseMode.HTML)
+            await message.reply_text(
+                f'<b><tg-emoji emoji-id="{PREMIUM_OK_EMOJI}">✔️</tg-emoji> لیست حساسیت از قبل خالی می‌باشد.</b>',
+                parse_mode=ParseMode.HTML,
+            )
         else:
-            count = len(sensitive); sensitive.clear(); mark_db_dirty(); save_db(force=True)
-            await message.reply_text(f'<b><tg-emoji emoji-id="{SENSITIVE_DONE_EMOJI}">⛔️</tg-emoji> عملیات پاکسازی لیست حساسیت با موفقیت انجام شد.</b>\n\n<b>تعداد {count} محتوا از لیست حساسیت حذف گردید.</b>', parse_mode=ParseMode.HTML)
+            # Cleanup is destructive, so commands require the same glass-button
+            # confirmation used by the other list-cleanup operations.
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    "بله",
+                    callback_data=f"sensitive_cleanup_confirm:{chat.id}",
+                    style="success",
+                    icon_custom_emoji_id=CHECK_CUSTOM_EMOJI_ID,
+                ),
+                InlineKeyboardButton(
+                    "خیر",
+                    callback_data=f"sensitive_cleanup_cancel:{chat.id}",
+                    style="danger",
+                    icon_custom_emoji_id=CROSS_CUSTOM_EMOJI_ID,
+                ),
+            ]])
+            await message.reply_text(
+                f'<b><tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✔️</tg-emoji> آیا از پاکسازی کامل لیست حساسیت مطمئن هستید؟</b>',
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML,
+            )
         raise ApplicationHandlerStop()
     replied = getattr(message, "reply_to_message", None)
     if replied is None:
@@ -197,7 +219,9 @@ async def handle_sensitive_panel_message(update: Update, context: ContextTypes.D
         return False
     if not await is_configured_group_manager(context, chat.id, user.id):
         db["states"]["waiting_sensitive_panel"].pop(str(user.id), None); mark_db_dirty(); save_db(force=True); return False
-    if (message.text or "").strip().lower() == "/done":
+    # Telegram may deliver /done as /done@BotUsername. Treat both forms as
+    # the flow terminator so the content handler never stores the command itself.
+    if re.fullmatch(r"/done(?:@[A-Za-z0-9_]+)?", (message.text or "").strip(), re.IGNORECASE):
         return False
     signature = _sensitive_message_signature(message)
     if not signature:
