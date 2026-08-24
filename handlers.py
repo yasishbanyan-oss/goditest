@@ -173,6 +173,10 @@ async def command_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     states = db.get("states", {})
     done_anything = False
 
+    # /done also finishes the sensitive-list panel flow.
+    if await sensitive_panel_done(update, context):
+        return
+
     # /done also finishes the filter-word entry flow.
     if await filter_done(update, context):
         return
@@ -282,82 +286,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raw_text = update.message.text or update.message.caption or ""
         clean_raw = raw_text.strip().lower()
         norm_text = normalize_text(raw_text)
-
-        # ------------------------------------------------------------
-        # SENSITIVE CONTENT LIST (reply-based, manager-only)
-        # ------------------------------------------------------------
-        if is_group:
-            sensitive_add_cmds = {
-                "حساس", "حساس شو", "گودی حساس شو", "گودی حواست", "حواست",
-                "گودی حواست جمع کن", "حواست جمع کن",
-            }
-            sensitive_remove_cmds = {
-                "حذف حساس", "حساس نشو", "گودی حساس نشو", "حذف حساسیت",
-                "گودی حذف حساس", "گودی حذف حساسیت",
-            }
-            if clean_raw in sensitive_add_cmds or clean_raw in sensitive_remove_cmds:
-                if not await is_configured_group_manager(context, chat_id, user_id):
-                    await update.message.reply_text(
-                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> شما دسترسی مدیریت لیست حساسیت را ندارید.</b>',
-                        parse_mode=ParseMode.HTML
-                    )
-                    return
-
-                target = update.message.reply_to_message
-                if not target:
-                    await update.message.reply_text(
-                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> برای اجرای این دستور باید روی پیام موردنظر ریپلای کنید.</b>',
-                        parse_mode=ParseMode.HTML
-                    )
-                    return
-
-                signature = get_message_sensitive_signature(target)
-                if not signature:
-                    await update.message.reply_text(
-                        f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> این نوع پیام قابل ثبت در لیست حساسیت نیست.</b>',
-                        parse_mode=ParseMode.HTML
-                    )
-                    return
-
-                sensitive_list = g_data.setdefault("sensitive_contents", [])
-                kind, value = signature
-                existing_index = next((i for i, item in enumerate(sensitive_list) if isinstance(item, dict) and item.get("kind") == kind and item.get("value") == value), None)
-                label = sensitive_content_label(target)
-
-                if clean_raw in sensitive_add_cmds:
-                    if existing_index is not None:
-                        await update.message.reply_text(
-                            f'<b><tg-emoji emoji-id="5206607081334906820">✔️</tg-emoji> {html.escape(label)} از قبل در لیست حساسیت قرار دارد.</b>',
-                            parse_mode=ParseMode.HTML
-                        )
-                        return
-                    sensitive_list.append({
-                        "kind": kind,
-                        "value": value,
-                        "label": label,
-                        "created_by": int(user_id),
-                        "created_at": datetime.now().timestamp(),
-                    })
-                    mark_db_dirty(); save_db(force=True)
-                    await update.message.reply_text(
-                        f'<b><tg-emoji emoji-id="5206607081334906820">✔️</tg-emoji> {html.escape(label)} با موفقیت به لیست حساسیت اضافه شد.</b>',
-                        parse_mode=ParseMode.HTML
-                    )
-                    return
-
-                if existing_index is None:
-                    await update.message.reply_text(
-                        f'<b><tg-emoji emoji-id="4956395910306202687">🔴</tg-emoji> {html.escape(label)} در لیست حساسیت وجود ندارد.</b>',
-                        parse_mode=ParseMode.HTML
-                    )
-                    return
-                sensitive_list.pop(existing_index)
-                mark_db_dirty(); save_db(force=True)
-                await update.message.reply_text(
-                    f'<b><tg-emoji emoji-id="4956395910306202687">🔴</tg-emoji> {html.escape(label)} با موفقیت از لیست حساسیت حذف گردید.</b>',
-                    parse_mode=ParseMode.HTML
-                )
-                return
         
         # --------------------------------------
         # USER CHECK COMMANDS (GLOBAL / NOT ADMIN-ONLY)
