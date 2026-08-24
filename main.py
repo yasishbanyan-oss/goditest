@@ -1,9 +1,9 @@
 # GoodiBot entry point
 import core
 import services, permissions, moderation, management, welcome, comments, jobs, links
-import panels, games, whisper, callbacks, callbacks2, handlers, handler2, support, help, fun, filter_handler, auto_responses, backup_restore, start_handler, sensitive
+import panels, games, whisper, callbacks, callbacks2, handlers, handler2, support, help, fun, filter_handler, auto_responses, backup_restore, start_handler, sensitive, smart_responses
 
-registry = core.bind_all_modules([services, permissions, moderation, management, welcome, comments, jobs, links, panels, games, whisper, callbacks, callbacks2, handlers, handler2, support, help, fun, filter_handler, auto_responses, backup_restore, start_handler, sensitive])
+registry = core.bind_all_modules([services, permissions, moderation, management, welcome, comments, jobs, links, panels, games, whisper, callbacks, callbacks2, handlers, handler2, support, help, fun, filter_handler, auto_responses, backup_restore, start_handler, sensitive, smart_responses])
 globals().update(registry)
 from core import *
 
@@ -22,13 +22,16 @@ def main():
     # Sensitive-content commands and enforcement run before normal group locks,
     # so protected content cannot be bypassed by another active lock.
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.TEXT & (~filters.COMMAND), _handle_sensitive_command), group=-9)
-    app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.ALL, enforce_sensitive_content), group=-8)
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.ALL, handle_sensitive_panel_message), group=-8)
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.TEXT & (~filters.COMMAND), handle_comment_post_lock_command), group=-6)
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.ALL, enforce_comment_post_lock), group=1)
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.ALL, enforce_sensitive_content), group=-7)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.ALL, enforce_group_locks), group=-5)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.UpdateType.EDITED_MESSAGE, enforce_group_locks), group=-5)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.TEXT & (~filters.COMMAND), handle_welcome_text_command), group=-4)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.IS_AUTOMATIC_FORWARD, handle_automatic_channel_comments), group=-3)
     # Pending comment messages must be consumed before filters/generic handlers.
-    app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), handle_pending_comment_message), group=-6)
+    app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), handle_pending_comment_message), group=-4)
     app.add_handler(ChatMemberHandler(handle_chat_member_welcome, ChatMemberHandler.CHAT_MEMBER), group=-2)
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members), group=-2)
     app.add_handler(ChatMemberHandler(track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
@@ -50,6 +53,7 @@ def main():
     # matching handler in a handler group; sharing group -1 made «دوز» silently
     # stop before reaching dwoz_message_handler.
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), dwoz_message_handler), group=-2)
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & filters.TEXT & (~filters.COMMAND), handle_smart_response), group=2)
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_goodi_support_message), group=-1)
     app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), handle_messages))
     app.add_error_handler(global_error_handler)
