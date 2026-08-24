@@ -294,3 +294,71 @@ async def comment_cleanup_execute(query, context, chat_id, db, yes):
     await query.message.edit_text(text, reply_markup=None, parse_mode=ParseMode.HTML)
     clear_comment_panel_session(db, query.from_user.id)
     save_db(force=True)
+
+
+COMMENT_POST_LOCK_ON = {"قفل کامنت", "کامنت این پست بسته", "کامنت این پست ببند", "گودی کامنتش ببند", "گودی کامنت پست بسته"}
+COMMENT_POST_LOCK_OFF = {"حذف قفل کامنت", "گودی کامنت باز", "کامنت باز", "کامنت باز کن", "کامنت فعال"}
+COMMENT_POST_LOCK_PREMIUM = "5424998570539373838"
+COMMENT_POST_UNLOCK_EMOJI = "5965216078106729238"
+
+def _comment_root_message_id(message):
+    reply = getattr(message, "reply_to_message", None)
+    if not reply:
+        return None
+    if getattr(reply, "is_automatic_forward", False):
+        return int(reply.message_id)
+    # Telegram may expose the discussion root as reply_to_top_message.
+    top = getattr(message, "reply_to_top_message", None)
+    if top is not None and getattr(top, "is_automatic_forward", False):
+        return int(top.message_id)
+    if top is not None and getattr(top, "message_id", None):
+        return int(top.message_id)
+    return None
+
+def _comment_post_locks(g):
+    locks = g.setdefault("comment_post_locks", {})
+    if not isinstance(locks, dict):
+        locks = {}; g["comment_post_locks"] = locks
+    return locks
+
+async def handle_comment_post_lock_command(update, context) -> bool:
+    msg = update.message; chat = update.effective_chat; user = update.effective_user
+    if not msg or not chat or chat.type not in ("group", "supergroup") or not user or user.is_bot:
+        return False
+    cmd = normalize_text((msg.text or "").strip()).lower()
+    if cmd not in COMMENT_POST_LOCK_ON and cmd not in COMMENT_POST_LOCK_OFF:
+        return False
+    if not await is_admin_or_owner(context, chat.id, user.id):
+        await msg.reply_text(f'<b><tg-emoji emoji-id="{COMMENT_CROSS_EMOJI}">❌</tg-emoji> فقط مدیران گروه دسترسی به این دستور را دارند.</b>', parse_mode=ParseMode.HTML)
+        raise ApplicationHandlerStop()
+    root = _comment_root_message_id(msg)
+    if root is None:
+        await msg.reply_text('<b>این دستورات تنها با ریپلای روی پست موردنظر قابل اجرا می‌باشند. <tg-emoji emoji-id="4956395910306202687">❌</tg-emoji></b>', parse_mode=ParseMode.HTML)
+        raise ApplicationHandlerStop()
+    db = load_db(); g = get_group_data(db, chat.id); locks = _comment_post_locks(g); key = str(root)
+    if cmd in COMMENT_POST_LOCK_ON:
+        if locks.get(key):
+            await msg.reply_text(f'<b><tg-emoji emoji-id="{COMMENT_CROSS_EMOJI}">❌</tg-emoji> قفل کامنت‌های این پست از قبل فعال بود.</b>', parse_mode=ParseMode.HTML)
+        else:
+            locks[key] = {"enabled": True, "created_by": int(user.id), "created_at": datetime.now().timestamp()}; mark_db_dirty(); save_db(force=True)
+            await msg.reply_text(f'<b><tg-emoji emoji-id="{COMMENT_POST_LOCK_PREMIUM}">✅</tg-emoji> قفل کامنت‌های این پست فعال شد.</b>', parse_mode=ParseMode.HTML)
+    else:
+        if not locks.get(key):
+            await msg.reply_text(f'<b><tg-emoji emoji-id="{COMMENT_CROSS_EMOJI}">❌</tg-emoji> قفل کامنت‌های این پست از قبل غیرفعال بود.</b>', parse_mode=ParseMode.HTML)
+        else:
+            locks.pop(key, None); mark_db_dirty(); save_db(force=True)
+            await msg.reply_text(f'<b><tg-emoji emoji-id="{COMMENT_POST_UNLOCK_EMOJI}">👤</tg-emoji> کامنت های پست مجدد فعال شدند.</b>', parse_mode=ParseMode.HTML)
+    raise ApplicationHandlerStop()
+
+async def enforce_comment_post_lock(update, context):
+    msg = update.message or update.edited_message; chat = update.effective_chat; user = update.effective_user
+    if not msg or not chat or chat.type not in ("group", "supergroup") or not user or user.is_bot: return
+    db = load_db(); g = get_group_data(db, chat.id); locks = _comment_post_locks(g)
+    if not locks: return
+    # Managers/owners are never removed by this feature.
+    if await is_configured_group_manager(context, chat.id, user.id): return
+    root = _comment_root_message_id(msg)
+    if root is None or not locks.get(str(root)): return
+    try: await msg.delete()
+    except Exception: pass
+    raise ApplicationHandlerStop()
