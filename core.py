@@ -742,7 +742,7 @@ def clear_user_pending_states_for_navigation(db: dict, user_id: int):
     states = db.setdefault("states", {})
     changed = False
     for state_name, bucket in list(states.items()):
-        if state_name in ("filter_panel",):
+        if state_name in ("filter_panel", "comment_panel"):
             continue
         if isinstance(bucket, dict) and uid in bucket:
             bucket.pop(uid, None)
