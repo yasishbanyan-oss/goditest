@@ -438,7 +438,8 @@ def get_default_group_structure() -> dict:
         "muted_users": {},
         "banned_users": {},
         "filter_words": [],
-        "sensitive_items": {}
+        "sensitive_items": {},
+        "comment_post_locks": {}
     }
 
 def get_default_db_structure() -> dict:
@@ -506,7 +507,8 @@ def get_default_db_structure() -> dict:
             "filter_panel": {},
             "filter_add": {},
             "filter_delete": {},
-            "filter_cleanup": {}
+            "filter_cleanup": {},
+            "waiting_sensitive_panel": {}
         }
     }
 
