@@ -442,6 +442,9 @@ async def _render_filter_lists(query, context, chat_id, db):
             InlineKeyboardButton("کلمات فیلتر", callback_data=f"list_filters:{chat_id}", style="primary", icon_custom_emoji_id="6086622219310470226")
         ],
         [
+            InlineKeyboardButton("🚫 حساسیت‌ها", callback_data=f"list_sensitive:{chat_id}", style="primary", icon_custom_emoji_id="5899892335658930224")
+        ],
+        [
             InlineKeyboardButton("سکوت‌ شده‌ها", callback_data=f"list_muted:{chat_id}", style="primary", icon_custom_emoji_id="5886328760218688328"),
             InlineKeyboardButton("بن‌شده‌ها", callback_data=f"list_banned:{chat_id}", style="primary", icon_custom_emoji_id="5872823922751185495")
         ],
