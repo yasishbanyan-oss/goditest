@@ -1,6 +1,8 @@
 # GoodiBot modular feature module
 from core import *
 
+SENSITIVE_DONE_EMOJI = "5197702557568359549"
+
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -1219,6 +1221,47 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data == "check_user_direct":
         await query.answer("آیدی عددی یا یوزرنیم را ارسال کن.")
         await open_check_user_panel(update, context, return_to_advanced=False, edit_message=query.message)
+        return
+
+    elif data.startswith("sensitive_cleanup_confirm:"):
+        cid = int(data.replace("sensitive_cleanup_confirm:", ""))
+        if not await is_configured_group_manager(context, cid, user_id):
+            await query.answer("این پنل برای شما نیست.", show_alert=True)
+            return
+        g = get_group_data(db, cid)
+        sensitive_items = g.setdefault("sensitive_items", {})
+        if not sensitive_items:
+            await query.message.edit_text(
+                f'<b><tg-emoji emoji-id="{PREMIUM_OK_EMOJI}">✔️</tg-emoji> لیست حساسیت از قبل خالی می‌باشد.</b>',
+                reply_markup=None,
+                parse_mode=ParseMode.HTML,
+            )
+            await query.answer()
+            return
+        count = len(sensitive_items)
+        sensitive_items.clear()
+        mark_db_dirty()
+        save_db(force=True)
+        await query.message.edit_text(
+            f'<b><tg-emoji emoji-id="{SENSITIVE_DONE_EMOJI}">⛔️</tg-emoji> عملیات پاکسازی لیست حساسیت با موفقیت انجام شد.</b>\n\n'
+            f'<b>تعداد {count} محتوا از لیست حساسیت حذف گردید.</b>',
+            reply_markup=None,
+            parse_mode=ParseMode.HTML,
+        )
+        await query.answer()
+        return
+
+    elif data.startswith("sensitive_cleanup_cancel:"):
+        cid = int(data.replace("sensitive_cleanup_cancel:", ""))
+        if not await is_configured_group_manager(context, cid, user_id):
+            await query.answer("این پنل برای شما نیست.", show_alert=True)
+            return
+        await query.message.edit_text(
+            f'<b><tg-emoji emoji-id="{PREMIUM_OK_EMOJI}">✔️</tg-emoji> پاکسازی لیست حساسیت لغو شد.</b>',
+            reply_markup=None,
+            parse_mode=ParseMode.HTML,
+        )
+        await query.answer()
         return
 
     elif data.startswith("list_sensitive:"):
