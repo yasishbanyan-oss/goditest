@@ -92,7 +92,17 @@ async def track_group_user_status(update: Update, context: ContextTypes.DEFAULT_
     old_status = old_member.status
     new_status = new_member.status
     now_ts = datetime.now().timestamp()
-    record = get_group_user_record(load_db(), chat.id, user.id)
+    db = load_db()
+    g_data = get_group_data(db, chat.id)
+    known_members = g_data.setdefault("known_members", {})
+    known_members[str(user.id)] = {
+        "username": getattr(user, "username", None) or "",
+        "fullname": getattr(user, "full_name", None) or "کاربر",
+        "last_seen": now_ts,
+        "status": str(new_status),
+    }
+    mark_db_dirty()
+    record = get_group_user_record(db, chat.id, user.id)
 
     was_real_member = old_status in [
         ChatMemberStatus.MEMBER,
@@ -358,6 +368,12 @@ async def register_member(update: Update, db: dict):
         g_data = get_group_data(db, chat.id)
         g_data["title"] = chat.title or g_data.get("title", "")
 
+        # Persistent per-group user snapshot. This is intentionally additive:
+        # it preserves every user Goodi has observed in the group for backup,
+        # restore and fast tagging without requiring Telegram to enumerate all
+        # group members (which the Bot API cannot do).
+        known_members = g_data.setdefault("known_members", {})
+        known_members[user_id] = {"username": username, "fullname": fullname, "last_seen": datetime.now().timestamp()}
         if update.message:
             last_msgs = g_data.setdefault("user_last_messages", {})
             last_msgs[user_id] = update.message.message_id
