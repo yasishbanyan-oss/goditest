@@ -107,52 +107,20 @@ def _welcome_panel_keyboard(chat_id: int, w: dict) -> InlineKeyboardMarkup:
 
 
 def _welcome_auto_keyboard(chat_id: int, w: dict) -> InlineKeyboardMarkup:
-    """Keyboard for the auto-delete timer.
-
-    The four timer controls intentionally use the premium custom emoji IDs
-    supplied by Telegram.  They are split into two rows so every control is
-    individually clickable on mobile clients:
-      - top row: +/- 1 minute
-      - second row: +/- 10 seconds
-    """
-    seconds = max(10, min(86400, int((w.get("auto_delete") or {}).get("seconds", 90))))
+    seconds = int((w.get("auto_delete") or {}).get("seconds", 90))
+    # Exactly four premium-emoji controls, matching the requested order:
+    # minute down, ten-second down, ten-second up, minute up.
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            "⏪⏪", callback_data=f"welcome_time:{int(chat_id)}:-60",
-            icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["down"]
-        ), InlineKeyboardButton(
-            "⏩⏩", callback_data=f"welcome_time:{int(chat_id)}:60",
-            icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["up"]
-        )],
-        [InlineKeyboardButton(
-            "⏪", callback_data=f"welcome_time:{int(chat_id)}:-10",
-            icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["down"]
-        ), InlineKeyboardButton(
-            "⏩", callback_data=f"welcome_time:{int(chat_id)}:10",
-            icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["up"]
-        )],
-        [InlineKeyboardButton(
-            _duration_text(seconds), callback_data=f"welcome_auto_noop:{int(chat_id)}",
-            icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["auto"]
-        )],
-        [InlineKeyboardButton(
-            "حذف خودکار پیام خوش‌آمدگویی", callback_data=f"welcome_auto:{int(chat_id)}",
-            style="success", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["auto"]
-        )],
-        [InlineKeyboardButton(
-            "بازگشت", callback_data=f"welcome_auto_back:{int(chat_id)}",
-            style="danger", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["back"]
-        )],
+        [InlineKeyboardButton("حذف خودکار پیام خوش‌آمدگویی : فعال", callback_data=f"welcome_auto:{chat_id}", style="success", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["auto"])],
+        [InlineKeyboardButton(_duration_text(seconds), callback_data=f"welcome_auto_noop:{chat_id}", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["auto"])],
+        [
+            InlineKeyboardButton("\u200b", callback_data=f"welcome_time:{chat_id}:-60", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["down"]),
+            InlineKeyboardButton("\u200b", callback_data=f"welcome_time:{chat_id}:-10", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["down"]),
+            InlineKeyboardButton("\u200b", callback_data=f"welcome_time:{chat_id}:10", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["up"]),
+            InlineKeyboardButton("\u200b", callback_data=f"welcome_time:{chat_id}:60", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["up"]),
+        ],
+        [InlineKeyboardButton("بازگشت", callback_data=f"welcome_auto_back:{chat_id}", style="danger", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["back"])],
     ])
-
-
-def _welcome_auto_text(w: dict) -> str:
-    auto = w.get("auto_delete") or {}
-    seconds = max(10, min(86400, int(auto.get("seconds", 90))))
-    return (
-        '<b><tg-emoji emoji-id="6008125631777218410">⚠️</tg-emoji> حذف خودکار پیام خوش‌آمد : فعال</b>\n'
-        f'<b>{_duration_text(seconds)}</b>'
-    )
 
 
 def _welcome_setup_prompt() -> str:
@@ -299,37 +267,25 @@ async def handle_welcome_settings_callback(query, context, db, data: str) -> boo
         return True
 
     if data.startswith("welcome_auto:"):
-        # This callback must be self-contained: clicking the auto-delete row
-        # opens the timer controls when disabled, and closes them when enabled.
-        # Answer the callback first so Telegram never leaves the button spinner
-        # running if a slow DB write or edit occurs afterwards.
         cid = int(data.split(":", 1)[1])
         if not await is_configured_group_manager(context, cid, user_id):
             await query.answer("این پنل برای شما نیست.", show_alert=True)
             return True
-        try:
-            g = get_group_data(db, cid)
-            w = _welcome_settings(g)
-            auto = w["auto_delete"]
-            auto["enabled"] = not bool(auto.get("enabled", False))
-            mark_db_dirty()
-            save_db(force=True)
-
-            if auto["enabled"]:
-                await query.message.edit_text(
-                    _welcome_auto_text(w),
-                    reply_markup=_welcome_auto_keyboard(cid, w),
-                    parse_mode=ParseMode.HTML,
-                )
-            else:
-                await render_welcome_panel_message(query, cid, db)
-            await query.answer()
-        except Exception:
-            logger.exception("Welcome auto-delete panel callback failed | chat_id=%s | user_id=%s", cid, user_id)
-            try:
-                await query.answer("تغییر حذف خودکار انجام نشد.", show_alert=True)
-            except Exception:
-                pass
+        g = get_group_data(db, cid)
+        w = _welcome_settings(g)
+        auto = w["auto_delete"]
+        auto["enabled"] = not bool(auto.get("enabled", False))
+        mark_db_dirty(); save_db(force=True)
+        if auto["enabled"]:
+            await query.message.edit_text(
+                '<b><tg-emoji emoji-id="6008125631777218410">⚠️</tg-emoji> حذف خودکار پیام خوش‌آمد : فعال</b>\n'
+                f'<b>{_duration_text(auto["seconds"])}</b>',
+                reply_markup=_welcome_auto_keyboard(cid, w),
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            await render_welcome_panel_message(query, cid, db)
+        await query.answer()
         return True
 
     if data.startswith("welcome_auto_noop:"):
@@ -357,7 +313,8 @@ async def handle_welcome_settings_callback(query, context, db, data: str) -> boo
         auto["seconds"] = max(10, min(86400, int(auto.get("seconds", 90)) + delta))
         mark_db_dirty(); save_db(force=True)
         await query.message.edit_text(
-            _welcome_auto_text(w),
+            '<b><tg-emoji emoji-id="6008125631777218410">⚠️</tg-emoji> حذف خودکار پیام خوش‌آمد : فعال</b>\n'
+            f'<b>{_duration_text(auto["seconds"])}</b>',
             reply_markup=_welcome_auto_keyboard(cid, w),
             parse_mode=ParseMode.HTML,
         )
