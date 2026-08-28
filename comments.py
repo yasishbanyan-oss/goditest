@@ -56,7 +56,10 @@ async def comment_panel_owner(query, context, db, chat_id):
         await query.answer("این پنل برای شما نیست.", show_alert=True)
         return False
     s = _session(db, uid)
-    if not s or int(s.get("chat_id", 0)) != int(chat_id) or int(s.get("message_id", 0)) != int(query.message.message_id):
+    # The panel is edited in-place as the user moves through its screens, and
+    # older keyboards can outlive the exact message-id snapshot. Ownership is
+    # therefore tied to the opener + group, not to a brittle message-id match.
+    if not s or int(s.get("chat_id", 0)) != int(chat_id):
         await query.answer("این پنل برای شما نیست.", show_alert=True)
         return False
     return True
@@ -292,7 +295,11 @@ async def comment_cleanup_execute(query, context, chat_id, db, yes):
     else:
         text = f'<b><tg-emoji emoji-id="{COMMENT_OK_EMOJI}">✅</tg-emoji> پنل پاکسازی کامنت با موفقیت بسته شد.</b>'
     await query.message.edit_text(text, reply_markup=None, parse_mode=ParseMode.HTML)
-    clear_comment_panel_session(db, query.from_user.id)
+    await query.answer()
+    await asyncio.sleep(5)
+    # Restore the comment-management panel instead of leaving the manager on a
+    # dead result message. The panel remains owned by the same user.
+    await render_comment_panel(query, context, chat_id, db)
     save_db(force=True)
 
 
