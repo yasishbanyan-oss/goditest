@@ -23,20 +23,26 @@ def check_and_set_welcome_duplicate(db: dict, chat_id: int, user_id: int) -> boo
     save_db()
     return False
 
-async def send_welcome_to_member(context: ContextTypes.DEFAULT_TYPE, chat, user, reply_to_message_id: int | None = None):
+async def send_welcome_to_member(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat,
+    user,
+    reply_to_message_id: int | None = None,
+    check_duplicate: bool = True,
+):
     try:
         if not user or user.is_bot:
-            return
+            return None
 
         db = load_db()
         g_data = get_group_data(db, chat.id)
-        welcome_settings = g_data.get("welcome", {})
+        welcome_settings = g_data.get("welcome", {}) or {}
 
-        if not welcome_settings.get("enabled", True):
-            return
+        if not welcome_settings.get("enabled", False):
+            return None
 
-        if check_and_set_welcome_duplicate(db, chat.id, user.id):
-            return
+        if check_duplicate and check_and_set_welcome_duplicate(db, chat.id, user.id):
+            return None
 
         day_fa, time_str = get_persian_date_info()
         chat_title = html.escape(chat.title or "گروه")
@@ -44,16 +50,16 @@ async def send_welcome_to_member(context: ContextTypes.DEFAULT_TYPE, chat, user,
 
         if not welcome_settings.get("custom", False):
             default_text = f"سلام {user_mention} ، به گروه {chat_title} خوش آمدید!\nساعت {time_str} روز {day_fa}!"
-            await context.bot.send_message(
+            sent = await context.bot.send_message(
                 chat_id=chat.id,
                 text=default_text,
                 parse_mode=ParseMode.HTML,
-                reply_to_message_id=reply_to_message_id
+                reply_to_message_id=reply_to_message_id,
             )
-            return
-
-        payload = welcome_settings.get("payload")
-        if payload:
+        else:
+            payload = welcome_settings.get("payload")
+            if not payload:
+                return None
             raw_text = payload.get("text") or payload.get("caption") or ""
             formatted_text = (
                 raw_text.replace("USERNAME", user_mention)
@@ -67,15 +73,48 @@ async def send_welcome_to_member(context: ContextTypes.DEFAULT_TYPE, chat, user,
                 temp_payload["text"] = formatted_text
             if "caption" in temp_payload:
                 temp_payload["caption"] = formatted_text
-            await send_media_payload(context.bot, chat.id, temp_payload, reply_to_message_id=reply_to_message_id)
+            sent = await send_media_payload(
+                context.bot,
+                chat.id,
+                temp_payload,
+                reply_to_message_id=reply_to_message_id,
+                return_message=True,
+            )
+
+        if sent and (welcome_settings.get("auto_delete") or {}).get("enabled") and context.job_queue:
+            seconds = max(10, min(86400, int((welcome_settings.get("auto_delete") or {}).get("seconds", 90))))
+            job_name = f"welcome_auto_delete:{int(chat.id)}:{int(sent.message_id)}"
+            for job in context.job_queue.get_jobs_by_name(job_name):
+                job.schedule_removal()
+            context.job_queue.run_once(
+                welcome_auto_delete_job,
+                when=seconds,
+                chat_id=int(chat.id),
+                name=job_name,
+                data={"chat_id": int(chat.id), "message_id": int(sent.message_id)},
+            )
+        return sent
 
     except Exception as e:
-        logger.error(f"Error dispatching welcome in chat: {e}")
+        logger.error(f"Error dispatching welcome in chat: {e}", exc_info=True)
+        return None
+
+
+async def welcome_auto_delete_job(context: ContextTypes.DEFAULT_TYPE):
+    data = context.job.data or {}
+    try:
+        await context.bot.delete_message(chat_id=int(data["chat_id"]), message_id=int(data["message_id"]))
+    except Exception:
+        pass
 
 async def handle_new_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.new_chat_members:
         return
     chat = update.effective_chat
+    db = load_db()
+    w = (get_group_data(db, chat.id).get("welcome", {}) or {})
+    if w.get("audience", "all") == "link":
+        return
     reply_id = update.message.message_id
     for member in update.message.new_chat_members:
         if not member.is_bot:
@@ -107,6 +146,13 @@ async def handle_chat_member_welcome(update: Update, context: ContextTypes.DEFAU
         if new_status == ChatMemberStatus.RESTRICTED:
             if not getattr(result.new_chat_member, "is_member", True):
                 return
+        db = load_db()
+        w = (get_group_data(db, chat.id).get("welcome", {}) or {})
+        audience = w.get("audience", "all")
+        invite_link = getattr(result, "invite_link", None)
+        via_chat_folder = bool(getattr(result, "via_chat_folder_invite_link", False))
+        if audience == "link" and invite_link is None and not via_chat_folder:
+            return
         await send_welcome_to_member(context, chat, user, reply_to_message_id=None)
 
 async def handle_welcome_text_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
