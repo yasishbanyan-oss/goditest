@@ -1042,6 +1042,8 @@ async def handle_filter_callback(query, context, db):
                 parse_mode=ParseMode.HTML
             )
             await query.answer()
+            await asyncio.sleep(5)
+            await render_filter_panel(query, context, cid, db)
             return True
         g = get_group_data(db, cid)
         if not _filter_words(g):
@@ -1054,6 +1056,8 @@ async def handle_filter_callback(query, context, db):
                 parse_mode=ParseMode.HTML
             )
             await query.answer()
+            await asyncio.sleep(5)
+            await render_filter_panel(query, context, cid, db)
             return True
         g["filter_words"] = []
         db["states"]["filter_cleanup"].pop(str(user_id), None)
@@ -1067,6 +1071,8 @@ async def handle_filter_callback(query, context, db):
             parse_mode=ParseMode.HTML
         )
         await query.answer()
+        await asyncio.sleep(5)
+        await render_filter_panel(query, context, cid, db)
         return True
 
     cid = int(parts[-1]) if parts[-1].lstrip("-").isdigit() else None
@@ -1228,8 +1234,14 @@ async def handle_filter_callback(query, context, db):
         if not await _owns_filter_panel(query, context, db, cid):
             return True
         _clear_filter_feature_states(db, user_id)
-        await render_filter_panel(query, context, cid, db)
+        await query.message.edit_text(
+            f'<b><tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✔️</tg-emoji> پاکسازی لیست فیلتر لغو شد.</b>',
+            reply_markup=None,
+            parse_mode=ParseMode.HTML,
+        )
         await query.answer()
+        await asyncio.sleep(5)
+        await render_filter_panel(query, context, cid, db)
         return True
 
     if parts[0] == "filter_cleanup_do":
@@ -1239,8 +1251,14 @@ async def handle_filter_callback(query, context, db):
         g["filter_words"] = []
         mark_db_dirty()
         save_db(force=True)
-        await render_filter_panel(query, context, cid, db)
+        await query.message.edit_text(
+            f'<b><tg-emoji emoji-id="{CHECK_CUSTOM_EMOJI_ID}">✔️</tg-emoji> پاکسازی لیست فیلتر با موفقیت انجام شد.</b>',
+            reply_markup=None,
+            parse_mode=ParseMode.HTML,
+        )
         await query.answer()
+        await asyncio.sleep(5)
+        await render_filter_panel(query, context, cid, db)
         return True
 
     return True
