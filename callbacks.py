@@ -38,6 +38,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     if await handle_filter_callback(query, context, db):
         return
 
+    # New advanced group-permission and welcome panels are isolated in their
+    # own modules so the legacy callback tree stays intact.
+    if await handle_group_permissions_callback(query, context, db, data):
+        return
+    if await handle_welcome_settings_callback(query, context, db, data):
+        return
+
     # اول از همه بررسی دکمه‌های لینک تا سریعاً واکنش نشان دهند
     if data.startswith("link_panel:"):
         parts = data.split(":", 2)
