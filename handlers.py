@@ -1821,17 +1821,43 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(final_text, reply_markup=final_markup, parse_mode=ParseMode.HTML)
             return
         if u_str in db["states"].get("waiting_welcome_msg", {}):
-            target_cid = db["states"]["waiting_welcome_msg"][u_str]
-            if await is_admin_or_owner(context, target_cid, user_id):
-                del db["states"]["waiting_welcome_msg"][u_str]
+            welcome_state = db["states"]["waiting_welcome_msg"][u_str]
+            if isinstance(welcome_state, dict):
+                target_cid = int(welcome_state.get("chat_id", 0) or 0)
+                panel_message_id = welcome_state.get("panel_message_id")
+            else:
+                target_cid = int(welcome_state)
+                panel_message_id = None
+            if target_cid and await is_admin_or_owner(context, target_cid, user_id):
                 payload = extract_media_payload(update.message)
                 if payload:
+                    del db["states"]["waiting_welcome_msg"][u_str]
                     g_data = get_group_data(db, target_cid)
-                    g_data["welcome"] = {"enabled": True, "custom": True, "payload": payload}
+                    welcome = g_data.setdefault("welcome", {})
+                    welcome["enabled"] = True
+                    welcome["custom"] = True
+                    welcome["payload"] = payload
+                    welcome.setdefault("audience", "all")
+                    welcome.setdefault("auto_delete", {"enabled": False, "seconds": 90})
                     mark_db_dirty()
                     save_db(force=True)
-                    await update.message.reply_text(" <b>پیام و مدیای خوش‌آمدگویی اختصاصی این گروه ذخیره شد!</b>", parse_mode=ParseMode.HTML)
-                    return
+                    await update.message.reply_text(
+                        '<b><tg-emoji emoji-id="5830144944399981619">✅</tg-emoji> پیام خوش‌آمد‌گویی تنظیم شد.</b>',
+                        parse_mode=ParseMode.HTML
+                    )
+                    if panel_message_id:
+                        try:
+                            current_w = _welcome_settings(get_group_data(db, target_cid))
+                            await context.bot.edit_message_text(
+                                chat_id=target_cid,
+                                message_id=int(panel_message_id),
+                                text=_welcome_current_text(current_w),
+                                reply_markup=_welcome_panel_keyboard(target_cid, current_w),
+                                parse_mode=ParseMode.HTML,
+                            )
+                        except Exception:
+                            logger.exception("Failed to refresh welcome panel after setup | chat_id=%s", target_cid)
+                    raise ApplicationHandlerStop()
 
         if u_str in db["states"].get("waiting_comment_msg", {}):
             comment_state = db["states"]["waiting_comment_msg"][u_str]
