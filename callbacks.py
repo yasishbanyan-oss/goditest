@@ -45,6 +45,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     if await handle_welcome_settings_callback(query, context, db, data):
         return
 
+    if await handle_feature_lock_callback(query, context, db, data):
+        return
+
     # اول از همه بررسی دکمه‌های لینک تا سریعاً واکنش نشان دهند
     if data.startswith("link_panel:"):
         parts = data.split(":", 2)
@@ -1244,6 +1247,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 parse_mode=ParseMode.HTML,
             )
             await query.answer()
+            await asyncio.sleep(5)
+            await render_sensitive_panel(query, context, cid, db)
             return
         count = len(sensitive_items)
         sensitive_items.clear()
@@ -1256,6 +1261,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode=ParseMode.HTML,
         )
         await query.answer()
+        await asyncio.sleep(5)
+        await render_sensitive_panel(query, context, cid, db)
         return
 
     elif data.startswith("sensitive_cleanup_cancel:"):
@@ -1269,6 +1276,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode=ParseMode.HTML,
         )
         await query.answer()
+        await asyncio.sleep(5)
+        await render_sensitive_panel(query, context, cid, db)
         return
 
     elif data.startswith("list_sensitive:"):
@@ -1342,6 +1351,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 parse_mode=ParseMode.HTML
             )
             await query.answer()
+            await asyncio.sleep(5)
+            await render_group_list_detail(query, context, cid, list_type, db)
             return
         await render_cleanup_confirm(query, list_type, cid); return
 
@@ -1359,7 +1370,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         names = {"owners": "مالکین", "admins": "مدیران", "special": "ویژه", "exempt": "معاف", "warns": "اخطارها", "muted": "سکوت ها", "banned": "بن ها"}
         name = names.get(list_type, "لیست")
         await query.message.edit_text(f'<b><tg-emoji emoji-id="{PREMIUM_OK_EMOJI}">✔️</tg-emoji> پاکسازی لیست {name} با موفقیت لغو شد.</b>', reply_markup=None, parse_mode=ParseMode.HTML)
-        await query.answer(); return
+        await query.answer()
+        await asyncio.sleep(5)
+        await render_group_list_detail(query, context, cid, list_type, db)
+        return
 
     elif data.startswith("list_cleanup:"):
         _, list_type, cid_s = data.split(":", 2); cid = int(cid_s)
@@ -1387,6 +1401,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             name = names.get(list_type, "لیست")
             await query.message.edit_text(f'<b><tg-emoji emoji-id="{PREMIUM_OK_EMOJI}">✔️</tg-emoji> لیست {name} از قبل خالی می‌باشد.</b>', reply_markup=None, parse_mode=ParseMode.HTML)
             await query.answer()
+            await asyncio.sleep(5)
+            await render_group_list_detail(query, context, cid, list_type, db)
             return
         if list_type in ("owners", "admins", "special", "exempt"):
             if list_type == "owners":
@@ -1409,7 +1425,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         names = {"owners": "مالکین", "admins": "مدیران", "special": "ویژه", "exempt": "معاف", "warns": "اخطارها", "muted": "سکوت ها", "banned": "بن ها"}
         name = names.get(list_type, "لیست")
         await query.message.edit_text(f'<b><tg-emoji emoji-id="{PREMIUM_OK_EMOJI}">✔️</tg-emoji> پاکسازی لیست {name} با موفقیت انجام شد.</b>', reply_markup=None, parse_mode=ParseMode.HTML)
-        await query.answer(); return
+        await query.answer()
+        await asyncio.sleep(5)
+        await render_group_list_detail(query, context, cid, list_type, db)
+        return
 
     elif data.startswith("panel_list_poems:"):
         cid = int(data.replace("panel_list_poems:", ""))
