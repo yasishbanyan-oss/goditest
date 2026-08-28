@@ -811,3 +811,11 @@ async def auto_response_cleanup_callback(query, context, chat_id: int, confirm: 
 
     await query.message.edit_text(text, reply_markup=None, parse_mode=ParseMode.HTML)
     await query.answer()
+    await asyncio.sleep(5)
+    # Re-open the same auto-response management screen after showing the result.
+    active_flow = _flow(db, user_id) or {}
+    if _flow_group(active_flow) == int(chat_id):
+        await _sync_group_auto_panel(context, active_flow, get_group_data(db, chat_id))
+    else:
+        # No active flow: keep the user's current list screen available.
+        await query.message.edit_text(_auto_list_text(get_group_data(db, chat_id)), reply_markup=_auto_main_keyboard(), parse_mode=ParseMode.HTML)
