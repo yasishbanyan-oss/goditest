@@ -108,12 +108,18 @@ def _welcome_panel_keyboard(chat_id: int, w: dict) -> InlineKeyboardMarkup:
 
 def _welcome_auto_keyboard(chat_id: int, w: dict) -> InlineKeyboardMarkup:
     seconds = int((w.get("auto_delete") or {}).get("seconds", 90))
+    # Keep the four time controls as four distinct premium-emoji buttons.
+    # The outer pair changes the timeout by one minute; the inner pair changes
+    # it by ten seconds.  Two rows also make the four controls unambiguous on
+    # narrow Telegram clients.
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("حذف خودکار پیام خوش‌آمدگویی", callback_data=f"welcome_auto:{chat_id}", style="success", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["auto"])],
+        [InlineKeyboardButton("حذف خودکار پیام خوش‌آمدگویی : فعال", callback_data=f"welcome_auto:{chat_id}", style="success", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["auto"])],
         [InlineKeyboardButton(_duration_text(seconds), callback_data=f"welcome_auto_noop:{chat_id}", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["auto"])],
         [
             InlineKeyboardButton("⏪⏪", callback_data=f"welcome_time:{chat_id}:-60", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["down"]),
             InlineKeyboardButton("⏩⏩", callback_data=f"welcome_time:{chat_id}:60", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["up"]),
+        ],
+        [
             InlineKeyboardButton("⏪", callback_data=f"welcome_time:{chat_id}:-10", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["down"]),
             InlineKeyboardButton("⏩", callback_data=f"welcome_time:{chat_id}:10", icon_custom_emoji_id=WELCOME_PANEL_EMOJIS["up"]),
         ],
