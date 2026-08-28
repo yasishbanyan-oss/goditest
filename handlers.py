@@ -299,6 +299,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # LINK COMMAND HANDLER (GROUP ONLY)
         # --------------------------------------
         if is_group and LINK_COMMAND_PATTERN.match(raw_text):
+            if await enforce_manager_feature(context, chat_id, user_id, "link", message=update.message):
+                return
             if not await is_admin_or_owner(context, chat_id, user_id):
                 await update.message.reply_text(
                     f'<b>تو که ادمین نیستی! اجازه ندارم بهت لینک بدم.</b> <tg-emoji emoji-id="5276508228128103199">😐</tg-emoji>',
@@ -493,6 +495,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # configured group manager (or a Telegram admin when the
                     # group has not been configured) may use it; it must not
                     # depend on the bot owner's identity.
+                    if role == "special" and await enforce_manager_feature(context, chat_id, user_id, "special", message=update.message):
+                        return
+                    if role == "exempt" and await enforce_manager_feature(context, chat_id, user_id, "exempt", message=update.message):
+                        return
                     allowed = await is_configured_group_manager(context, chat_id, user_id)
                     if not allowed:
                         await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> فقط مالکین گروه دسترسی اجرای این دستور را دارند.</b>', parse_mode=ParseMode.HTML); return
@@ -671,6 +677,10 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     rest = cmd[len(matched):].strip()
                     if rest and not _looks_like_user_target(rest):
                         return
+                    if role == "special" and await enforce_manager_feature(context, chat_id, user_id, "special", message=update.message):
+                        return
+                    if role == "exempt" and await enforce_manager_feature(context, chat_id, user_id, "exempt", message=update.message):
+                        return
                     if role == "owners":
                         # The bot's OWNER_ID gets this power only when that same
                         # Telegram account is the real owner of this exact group.
@@ -720,6 +730,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             if cmd in cleanup_cmds:
                 lt = cleanup_cmds[cmd]
+                if await enforce_manager_feature(context, chat_id, user_id, "cleanup", message=update.message):
+                    return
                 if lt == "owners" and not await is_primary_or_bot_owner_of_group(context, chat_id, g_data, user_id):
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> این دستور فقط مختص مالک گروه میباشد.</b>', parse_mode=ParseMode.HTML); return
                 if not await is_configured_group_manager(context, chat_id, user_id):
@@ -742,6 +754,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             warn_aliases = ["اخطار بده", "هشدار بده", "اخطار", "هشدار", "warn"]
             warn_match = next((x for x in sorted(warn_aliases, key=len, reverse=True) if cmd == x or cmd.startswith(x + " ")), None)
             if warn_match:
+                if await enforce_manager_feature(context, chat_id, user_id, "warn", message=update.message):
+                    return
                 if not await is_configured_group_manager(context, chat_id, user_id):
                     await update.message.reply_text(f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> شما مدیر گروه نیستید و دسترسی به سیستم اخطار ندارید.</b>', parse_mode=ParseMode.HTML); return
                 s = g_data.get("warning_settings", {}) or {}
@@ -901,6 +915,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pre_target = ""
 
             if action:
+                feature_for_action = "ban" if action in ("ban", "unban") else "mute"
+                if await enforce_manager_feature(context, chat_id, user_id, feature_for_action, message=update.message):
+                    return
                 if not await is_configured_group_manager(context, chat_id, user_id):
                     await update.message.reply_text('<b><tg-emoji emoji-id="{0}">❌</tg-emoji> شما اجازه اجرای این دستور را ندارید.</b>'.format(CROSS_CUSTOM_EMOJI_ID), parse_mode=ParseMode.HTML); return
                 rest = cmd[len(matched):].strip()
@@ -1624,6 +1641,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if clean_raw in PIN_PATTERNS or clean_raw in UNPIN_PATTERNS:
             if not is_group:
                 return
+            if await enforce_manager_feature(context, chat_id, user_id, "pin", message=update.message):
+                return
             if not await is_admin_or_owner(context, chat_id, user_id):
                 await update.message.reply_text(
                     f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> فقط مدیران گروه دسترسی اجرای این دستور را دارند.</b>',
@@ -1705,6 +1724,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if is_group and clean_raw in ["پنل", "admin", "/admin"]:
+            if await enforce_manager_feature(context, chat_id, user_id, "settings", message=update.message):
+                return
             if not await is_configured_group_manager(context, chat_id, user_id):
                 await update.message.reply_text(
                     f'<b><tg-emoji emoji-id="{CROSS_CUSTOM_EMOJI_ID}">❌</tg-emoji> شما دسترسی مدیریت این گروه را ندارید.</b>',
@@ -2147,6 +2168,23 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rand_emoji_id = random.choice(["5886539179256450622", "5922483378304586599", "5195297917048462460", "5983342699816685361"])
             await update.message.reply_text(f"{target_mention}\n\n<tg-emoji emoji-id=\"{rand_emoji_id}\">🎲</tg-emoji> <b>{val}٪ {html.escape(topic)}ه</b>", parse_mode=ParseMode.HTML)
             return
+
+        # --------------------------------------
+        # MANAGER LIMIT: FUN COMMANDS
+        # --------------------------------------
+        if is_group:
+            fun_command_exact = {
+                "ساعت", "ساعت جهانی", "خوشتیپ", "خوشتیپ کیه", "خوشتیپ کی", "خوژتیپ", "خوژتیپ کیه", "خوژتیپ کی",
+                "جنده", "جنده کیه", "جنده کی", "کونی", "کونی کیه", "کونی کی", "جقی", "جقی کیه", "جقی گروه",
+                "کصخل", "کسخل", "کصخل گروه", "کسخل گروه", "سکسی", "سکسی گروه", "جذاب", "جذاب گروه",
+                "شیپ", "شیپ کن", "کاپل", "کاپل کن", "شعر", "شعر بگو", "شاعر شو",
+            }
+            fun_prefix = any(norm_text.startswith(prefix) for prefix in ("ساعت ", "درصد ", "این چقدر ", "این چقد "))
+            food_fun = norm_text in {"غذا", "غدا", "نهار", "شام"}
+            fun_named = bool(FUN_NAMED_PATTERN.match(raw_text))
+            fun_normal = bool(FUN_NORMAL_PATTERN.match(raw_text))
+            if (norm_text in fun_command_exact or fun_prefix or food_fun or fun_named or fun_normal or DODOL_PATTERN.search(raw_text)) and await enforce_manager_feature(context, chat_id, user_id, "fun", message=update.message):
+                return
 
         # --------------------------------------
         # WORLD TIME (GROUP ONLY)
