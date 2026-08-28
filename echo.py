@@ -170,9 +170,13 @@ async def handle_echo_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Bypass the bot-wide emoji sanitizer only for echo. This command explicitly
     # promises to repeat both normal and premium/custom emoji exactly as sent.
-    await _core._original_message_reply_text(
-        message,
-        rendered,
+    # Do not reply through the deleted Message object. Telegram may reject a
+    # reply whose source message has already been deleted, which previously
+    # caused the command message to disappear without the repeated text being
+    # sent. Send the result directly to the same chat instead.
+    await context.bot.send_message(
+        chat_id=chat.id,
+        text=rendered,
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
     )
