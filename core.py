@@ -439,7 +439,9 @@ def get_default_group_structure() -> dict:
         "banned_users": {},
         "filter_words": [],
         "sensitive_items": {},
-        "comment_post_locks": {}
+        "comment_post_locks": {},
+        "feature_locks": {"manager_limit": False, "ban": False, "mute": False, "warn": False, "settings": False, "cleanup": False, "exempt": False, "pin": False, "link": False, "fun": False, "echo": False, "special": False},
+        "known_members": {}
     }
 
 def get_default_db_structure() -> dict:
