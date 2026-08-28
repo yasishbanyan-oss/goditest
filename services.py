@@ -200,38 +200,39 @@ def extract_media_payload(msg) -> dict | None:
         return {"type": "sticker", "file_id": msg.sticker.file_id}
     return None
 
-async def send_media_payload(bot, chat_id: int, payload: dict, reply_to_message_id: int | None = None) -> bool:
+async def send_media_payload(bot, chat_id: int, payload: dict, reply_to_message_id: int | None = None, return_message: bool = False):
     try:
+        sent_message = None
         mtype = payload.get("type")
         fid = payload.get("file_id")
         cap = payload.get("caption", "")
         txt = payload.get("text", "")
 
         if mtype == "text":
-            await bot.send_message(chat_id=chat_id, text=txt, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+            sent_message = await bot.send_message(chat_id=chat_id, text=txt, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
         elif mtype == "photo":
-            await bot.send_photo(chat_id=chat_id, photo=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+            sent_message = await bot.send_photo(chat_id=chat_id, photo=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
         elif mtype == "animation":
-            await bot.send_animation(chat_id=chat_id, animation=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+            sent_message = await bot.send_animation(chat_id=chat_id, animation=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
         elif mtype == "video":
-            await bot.send_video(chat_id=chat_id, video=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+            sent_message = await bot.send_video(chat_id=chat_id, video=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
         elif mtype == "voice":
-            await bot.send_voice(chat_id=chat_id, voice=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+            sent_message = await bot.send_voice(chat_id=chat_id, voice=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
         elif mtype == "audio":
-            await bot.send_audio(chat_id=chat_id, audio=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+            sent_message = await bot.send_audio(chat_id=chat_id, audio=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
         elif mtype == "document":
-            await bot.send_document(chat_id=chat_id, document=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+            sent_message = await bot.send_document(chat_id=chat_id, document=fid, caption=cap, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
         elif mtype == "video_note":
-            await bot.send_video_note(chat_id=chat_id, video_note=fid, reply_to_message_id=reply_to_message_id)
+            sent_message = await bot.send_video_note(chat_id=chat_id, video_note=fid, reply_to_message_id=reply_to_message_id)
         elif mtype == "contact":
-            await bot.send_contact(chat_id=chat_id, phone_number=payload.get("phone_number", ""),
+            sent_message = await bot.send_contact(chat_id=chat_id, phone_number=payload.get("phone_number", ""),
                                    first_name=payload.get("first_name", ""), last_name=payload.get("last_name", ""),
                                    vcard=payload.get("vcard", "") or None, reply_to_message_id=reply_to_message_id)
         elif mtype == "location":
             kwargs = {}
             for k in ("horizontal_accuracy", "live_period", "heading", "proximity_alert_radius"):
                 if payload.get(k) is not None: kwargs[k] = payload[k]
-            await bot.send_location(chat_id=chat_id, latitude=payload["latitude"], longitude=payload["longitude"],
+            sent_message = await bot.send_location(chat_id=chat_id, latitude=payload["latitude"], longitude=payload["longitude"],
                                     reply_to_message_id=reply_to_message_id, **kwargs)
         elif mtype == "venue":
             kwargs = {}
@@ -239,15 +240,15 @@ async def send_media_payload(bot, chat_id: int, payload: dict, reply_to_message_
             if payload.get("foursquare_type"): kwargs["foursquare_type"] = payload["foursquare_type"]
             if payload.get("google_place_id"): kwargs["google_place_id"] = payload["google_place_id"]
             if payload.get("google_place_type"): kwargs["google_place_type"] = payload["google_place_type"]
-            await bot.send_venue(chat_id=chat_id, latitude=payload["latitude"], longitude=payload["longitude"],
+            sent_message = await bot.send_venue(chat_id=chat_id, latitude=payload["latitude"], longitude=payload["longitude"],
                                  title=payload["title"], address=payload["address"],
                                  reply_to_message_id=reply_to_message_id, **kwargs)
         elif mtype == "sticker":
-            await bot.send_sticker(chat_id=chat_id, sticker=fid, reply_to_message_id=reply_to_message_id)
-        return True
+            sent_message = await bot.send_sticker(chat_id=chat_id, sticker=fid, reply_to_message_id=reply_to_message_id)
+        return sent_message if return_message else True
     except Exception as e:
         logger.error(f"Failed to dispatch media payload: {e}")
-        return False
+        return None if return_message else False
 
 async def dispatch_shutdown_message(bot, target_chat_id: int, shutdown_data: dict, reply_to_msg_id: int | None = None):
     if not shutdown_data:
