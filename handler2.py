@@ -123,37 +123,25 @@ async def _collect_recent_tag_users(context, chat_id: int, db: dict, limit: int)
             "fullname": item.get("user_name", "کاربر"),
         }, activity=True)
 
-    # Per-group records and the global cache are fallback sources only.
+    # Per-group records and the persistent per-group snapshot are fallback
+    # sources. Never fall back to the global member cache: that cache spans all
+    # groups and could cause unnecessary API checks for unrelated users.
     for uid, info in reversed(list((g_data.get("user_records", {}) or {}).items())):
         cached = db.get("members", {}).get(str(uid), {}) or {}
         add_candidate(uid, cached if cached else info, activity=False)
-
-    if member_count is not None and member_count <= limit:
-        for uid, info in (db.get("members", {}) or {}).items():
-            add_candidate(uid, info, activity=False)
+    for uid, info in reversed(list((g_data.get("known_members", {}) or {}).items())):
+        add_candidate(uid, info, activity=False)
 
     result = []
     for uid, username, fullname in candidates:
-        # A user observed sending a message in this exact group is already
-        # proven to be a group participant.  Do not discard that user merely
-        # because get_chat_member is temporarily unavailable or its cache is
-        # stale.  For cache-only users we still require a live membership check.
+        # Activity records come directly from messages observed in this exact
+        # group, so they are already proof of membership at observation time.
+        # Avoid one get_chat_member request per user: that was the main source
+        # of the old 50/300-tag slowdown.
         if uid in activity_ids:
-            try:
-                member = await cached_chat_member(context, chat_id, uid)
-                user_obj = getattr(member, "user", None)
-                if getattr(member, "status", None) in (
-                    ChatMemberStatus.MEMBER,
-                    ChatMemberStatus.ADMINISTRATOR,
-                    ChatMemberStatus.OWNER,
-                ):
-                    username = getattr(user_obj, "username", None) or username
-                    fullname = getattr(user_obj, "full_name", None) or fullname or "کاربر"
-            except Exception:
-                # Keep the observed user with the stored username/name.
-                pass
             result.append((uid, username, fullname or "کاربر"))
         else:
+            # Only fallback/cache-only candidates need a membership check.
             try:
                 member = await cached_chat_member(context, chat_id, uid)
                 if member.status not in (
@@ -304,6 +292,11 @@ async def handle_tag_commands(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     raw = update.message.text or update.message.caption or ""
     normalized = normalize_text(raw).strip().lower()
+
+    # Echo/repeat commands live in the same fast text-handler group. Dispatch
+    # them before tag matching so the tag handler never consumes them.
+    if await handle_echo_command(update, context):
+        return
 
     if normalized in TAG_OPEN_COMMANDS:
         await _open_tag_panel(update, context)
