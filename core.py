@@ -92,7 +92,7 @@ async def _premium_send_message(self, *args, **kwargs):
 
 Bot.send_message = _premium_send_message
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8618205537:AAHZTpyWz5Sz7CU4aUejFRCa_KX_iZG4QFM")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8618205537:AAFZSom3Z86dnOqn95hdSRZTIDk8NaNIfdg")
 
 OWNER_ID = int(os.getenv("OWNER_ID", "6749949992"))
 
@@ -425,7 +425,7 @@ def get_default_group_structure() -> dict:
         "poems": list(DEFAULT_POEMS),
         "media_lef": None,
         "cooldowns": {},
-        "welcome": {"enabled": True, "custom": False},
+        "welcome": {"enabled": False, "custom": False, "payload": None, "audience": "all", "auto_delete": {"enabled": False, "seconds": 90}},
         "comment": {"enabled": False, "custom": False},
         "random_reaction": True,
         "invite_link": None,
@@ -770,6 +770,18 @@ def get_group_data(db: dict, chat_id: int | str) -> dict:
     else:
         if "user_last_messages" not in groups[cid_str]:
             groups[cid_str]["user_last_messages"] = {}
+        if "welcome" not in groups[cid_str] or not isinstance(groups[cid_str].get("welcome"), dict):
+            groups[cid_str]["welcome"] = {"enabled": False, "custom": False, "payload": None, "audience": "all", "auto_delete": {"enabled": False, "seconds": 90}}
+            mark_db_dirty()
+        else:
+            welcome = groups[cid_str]["welcome"]
+            welcome.setdefault("enabled", False)
+            welcome.setdefault("custom", bool(welcome.get("payload")))
+            welcome.setdefault("payload", None)
+            welcome.setdefault("audience", "all")
+            auto_delete = welcome.setdefault("auto_delete", {})
+            auto_delete.setdefault("enabled", False)
+            auto_delete.setdefault("seconds", 90)
         if "filter_words" not in groups[cid_str] or not isinstance(groups[cid_str]["filter_words"], list):
             groups[cid_str]["filter_words"] = []
             mark_db_dirty()
