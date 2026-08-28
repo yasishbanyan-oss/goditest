@@ -179,11 +179,23 @@ def _group_departure_report(db: dict, chat_id: int, reason: str) -> tuple[bytes,
                 member_ids.add(int(uid))
             except Exception:
                 pass
+    # Include the persistent per-group user snapshot as well. This makes a
+    # departure backup retain every user Goodi has observed in that group, not
+    # only users present in recent message logs or role lists.
+    for uid in (g_data.get("known_members", {}) or {}).keys():
+        try:
+            member_ids.add(int(uid))
+        except Exception:
+            pass
     members = db.get("members", {}) or {}
+    known_members = g_data.get("known_members", {}) or {}
     for uid in sorted(member_ids):
         info = members.get(str(uid), {}) or {}
+        group_info = known_members.get(str(uid), {}) or {}
+        username = group_info.get("username") or info.get("username", "")
+        fullname = group_info.get("fullname") or info.get("fullname", "کاربر")
         lines.append(
-            f"user_id={uid} | username={info.get('username', '')} | fullname={info.get('fullname', 'کاربر')}"
+            f"user_id={uid} | username={username} | fullname={fullname}"
         )
 
     lines.extend([
